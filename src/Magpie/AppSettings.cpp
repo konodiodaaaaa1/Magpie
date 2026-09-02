@@ -86,6 +86,8 @@ static void WriteProfile(rapidjson::PrettyWriter<rapidjson::StringBuffer>& write
 	writer.Int(profile.scalingMode);
 	writer.Key("captureMethod");
 	writer.Uint((uint32_t)profile.captureMethod);
+	writer.Key("captureMethodVersion");
+	writer.Uint(2);
 	writer.Key("multiMonitorUsage");
 	writer.Uint((uint32_t)profile.multiMonitorUsage);
 	if (!profile.preferredMonitorId.empty()) {
@@ -1095,7 +1097,16 @@ bool AppSettings::_LoadProfile(
 			JsonHelper::ReadUInt(profileObj, "captureMode", captureMethod);
 		}
 		
+		uint32_t captureMethodVersion = 1;
+		JsonHelper::ReadUInt(profileObj, "captureMethodVersion", captureMethodVersion);
+		// Version 2 inserted Graphics Capture (HDR) after the original Graphics Capture entry.
+		if (captureMethodVersion < 2 && captureMethod > 0) {
+			++captureMethod;
+		}
 		if (captureMethod >= (uint32_t)CaptureMethod::COUNT) {
+			captureMethod = (uint32_t)CaptureMethod::GraphicsCapture;
+		} else if (captureMethod == (uint32_t)CaptureMethod::GraphicsCaptureHDR &&
+			!Win32Helper::GetOSVersion().Is20H1OrNewer()) {
 			captureMethod = (uint32_t)CaptureMethod::GraphicsCapture;
 		} else if (captureMethod == (uint32_t)CaptureMethod::DesktopDuplication) {
 			// Desktop Duplication 捕获模式要求 Win10 20H1+

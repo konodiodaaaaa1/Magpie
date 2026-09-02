@@ -108,8 +108,16 @@ ScalingError ScalingWindow::_StartImpl(HWND hwndSrc) noexcept {
 
 	if (_srcTracker.IsZoomed()) {
 		if (_options.IsWindowedMode()) {
+			if (_options.captureMethod == CaptureMethod::GraphicsCaptureHDR) {
+				// HDR capture keeps the source's native swap chain visible through the
+				// fullscreen presenter, so a maximized source can follow the normal
+				// fullscreen scaling path instead of being rejected as windowed.
+				Logger::Get().Info("HDR 捕获遇到最大化源窗口，自动切换到全屏缩放");
+				_options.IsWindowedMode(false);
+			} else {
 			Logger::Get().Info("已最大化的窗口不支持窗口模式缩放");
 			return ScalingError::BannedInWindowedMode;
+			}
 		} else if (!_options.RealIsAllowScalingMaximized()) {
 			Logger::Get().Info("源窗口已最大化");
 			return ScalingError::Maximized;

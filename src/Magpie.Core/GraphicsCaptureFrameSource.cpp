@@ -18,6 +18,10 @@ using namespace Windows::Graphics::DirectX::Direct3D11;
 
 namespace Magpie {
 
+bool GraphicsCaptureFrameSource::_IsHdr() const noexcept {
+	return ScalingWindow::Get().Options().captureMethod == CaptureMethod::GraphicsCaptureHDR;
+}
+
 bool GraphicsCaptureFrameSource::_Initialize() noexcept {
 	ID3D11Device5* d3dDevice = _deviceResources->GetD3DDevice();
 
@@ -60,7 +64,7 @@ bool GraphicsCaptureFrameSource::_Initialize() noexcept {
 
 	_output = DirectXHelper::CreateTexture2D(
 		d3dDevice,
-		DXGI_FORMAT_B8G8R8A8_UNORM,
+		_IsHdr() ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM,
 		_frameBox.right - _frameBox.left,
 		_frameBox.bottom - _frameBox.top,
 		D3D11_BIND_SHADER_RESOURCE
@@ -111,6 +115,18 @@ FrameSourceState GraphicsCaptureFrameSource::_Update() noexcept {
 	if (FAILED(hr)) {
 		Logger::Get().ComError("从获取 IDirect3DSurface 获取 ID3D11Texture2D 失败", hr);
 		return FrameSourceState::Error;
+	}
+	if (_diagnosticFrameCount < 3) {
+		D3D11_TEXTURE2D_DESC sourceDesc{};
+		D3D11_TEXTURE2D_DESC outputDesc{};
+		withFrame->GetDesc(&sourceDesc);
+		_output->GetDesc(&outputDesc);
+		Logger::Get().Info(fmt::format(
+			"HDR 捕获帧: source={}x{} format={} output={}x{} format={} box={}x{}",
+			sourceDesc.Width, sourceDesc.Height, (uint32_t)sourceDesc.Format,
+			outputDesc.Width, outputDesc.Height, (uint32_t)outputDesc.Format,
+			_frameBox.right - _frameBox.left, _frameBox.bottom - _frameBox.top));
+		++_diagnosticFrameCount;
 	}
 
 	_deviceResources->GetD3DDC()->CopySubresourceRegion(_output.get(), 0, 0, 0, 0, withFrame.get(), 0, &_frameBox);
@@ -322,7 +338,7 @@ bool GraphicsCaptureFrameSource::_StartCapture() noexcept {
 		// 创建帧缓冲池。帧的尺寸和 _captureItem.Size() 不同
 		_captureFramePool = winrt::Direct3D11CaptureFramePool::Create(
 			_wrappedD3DDevice,
-			winrt::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+			_IsHdr() ? winrt::DirectXPixelFormat::R16G16B16A16Float : winrt::DirectXPixelFormat::B8G8R8A8UIntNormalized,
 			4,	// 帧的缓存数量，更大的值有利于在低帧率下降低延迟
 			{ (int)_frameBox.right, (int)_frameBox.bottom } // 帧的尺寸为包含源窗口的最小尺寸
 		);

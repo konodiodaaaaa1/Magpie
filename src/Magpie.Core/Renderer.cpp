@@ -740,6 +740,9 @@ bool Renderer::_InitFrameSource() noexcept {
 	case CaptureMethod::GraphicsCapture:
 		_frameSource = std::make_unique<GraphicsCaptureFrameSource>();
 		break;
+	case CaptureMethod::GraphicsCaptureHDR:
+		_frameSource = std::make_unique<GraphicsCaptureFrameSource>();
+		break;
 	case CaptureMethod::DesktopDuplication:
 		_frameSource = std::make_unique<DesktopDuplicationFrameSource>();
 		break;
@@ -915,7 +918,7 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 			passDesc.cso = nullptr;
 		}
 	}
-	
+
 	if (_ShouldAppendBicubic(inOutTexture)) {
 		if (!_AppendBicubic(&inOutTexture)) {
 			Logger::Get().Error("_AppendBicubic 失败");
@@ -973,7 +976,9 @@ void Renderer::_UpdateActiveEffectDescs() noexcept {
 
 bool Renderer::_ShouldAppendBicubic(ID3D11Texture2D* outTexture) noexcept {
 	const ScalingOptions& options = ScalingWindow::Get().Options();
-
+	if (options.captureMethod == CaptureMethod::GraphicsCaptureHDR) {
+		return false;
+	}
 	D3D11_TEXTURE2D_DESC texDesc;
 	outTexture->GetDesc(&texDesc);
 	const SIZE lastOutputSize = { (LONG)texDesc.Width, (LONG)texDesc.Height };
@@ -1320,7 +1325,9 @@ HANDLE Renderer::_CreateSharedTexture(ID3D11Texture2D* effectsOutput) noexcept {
 	for (uint32_t i = 0; i < _sharedTextureSlotCount; ++i) {
 		_backendSharedTextures[i] = DirectXHelper::CreateTexture2D(
 			_backendResources.GetD3DDevice(),
-			DXGI_FORMAT_R8G8B8A8_UNORM,
+			// The frontend copies this texture into the presenter target. Keep the
+			// format identical to the effect output, including the HDR FP16 path.
+			desc.Format,
 			textureSize.cx,
 			textureSize.cy,
 			D3D11_BIND_SHADER_RESOURCE,
@@ -1353,6 +1360,9 @@ HANDLE Renderer::_CreateSharedTexture(ID3D11Texture2D* effectsOutput) noexcept {
 			return NULL;
 		}
 	}
+	Logger::Get().Info(fmt::format(
+		"共享呈现纹理: {}x{} format={}",
+		textureSize.cx, textureSize.cy, (uint32_t)desc.Format));
 	if (_sharedTextureSlotCount > 1) {
 		Logger::Get().Info(fmt::format(
 			"DLSSFG bounded presentation ring initialized: slots={}",

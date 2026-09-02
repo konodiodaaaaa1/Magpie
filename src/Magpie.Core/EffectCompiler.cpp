@@ -590,8 +590,8 @@ static uint32_t ResolveParameter(std::string_view block, EffectDesc& desc) noexc
 
 
 static uint32_t ResolveTexture(std::string_view block, EffectDesc& desc) noexcept {
-	// 如果名称为 INPUT 不能有任何选项，含 SOURCE 时不能有任何其他选项
-	// 如果名称为 OUTPUT 只能有 WIDTH 或 HEIGHT
+	// INPUT/OUTPUT are predeclared; FORMAT is allowed so effects can opt into
+	// FP16 HDR textures while retaining the usual size restrictions.
 	// 否则必需的选项: FORMAT
 	// 可选的选项: WIDTH, HEIGHT
 
@@ -700,18 +700,24 @@ static uint32_t ResolveTexture(std::string_view block, EffectDesc& desc) noexcep
 	}
 
 	if (token == desc.textures[0].name) {
-		if (processed.any()) {
+		if (processed[0] || processed[2] || processed[3]) {
 			return 1;
 		}
 
+		if (processed[1]) {
+			desc.textures[0].format = texDesc.format;
+		}
 		// INPUT 已为第一个元素
 		desc.textures.pop_back();
 	} else if (token == desc.textures[1].name) {
-		if (processed[0] || processed[1]) {
+		if (processed[0]) {
 			return 1;
 		}
 
 		// OUTPUT 已为第二个元素
+		if (processed[1]) {
+			desc.textures[1].format = texDesc.format;
+		}
 		desc.textures[1].sizeExpr = std::move(texDesc.sizeExpr);
 		desc.textures.pop_back();
 	} else {

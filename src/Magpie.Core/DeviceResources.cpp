@@ -172,7 +172,8 @@ bool DeviceResources::_TryCreateD3DDevice(const winrt::com_ptr<IDXGIAdapter1>& a
 		createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 	}
 	// WGC 和 D3D11_CREATE_DEVICE_SINGLETHREADED 不兼容
-	if (isForeground || ScalingWindow::Get().Options().captureMethod != CaptureMethod::GraphicsCapture) {
+	if (isForeground || (ScalingWindow::Get().Options().captureMethod != CaptureMethod::GraphicsCapture &&
+		ScalingWindow::Get().Options().captureMethod != CaptureMethod::GraphicsCaptureHDR)) {
 		createDeviceFlags |= D3D11_CREATE_DEVICE_SINGLETHREADED;
 	}
 #ifdef MP_USE_COMPSWAPCHAIN

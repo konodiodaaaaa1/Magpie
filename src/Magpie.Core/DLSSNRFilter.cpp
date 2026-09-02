@@ -1561,10 +1561,12 @@ bool DLSSNRFilter::Initialize(
 		return false;
 	}
 	const bool supportedInput = inputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-		inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
-	if (!supportedInput || outputDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM) {
+		inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+		inputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+	if (!supportedInput || (outputDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+		outputDesc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT)) {
 		Logger::Get().Error(fmt::format(
-			"DLSSNR SDR path unsupported formats: input={}, output={}",
+			"DLSSNR unsupported formats: input={}, output={}",
 			(uint32_t)inputDesc.Format, (uint32_t)outputDesc.Format));
 		return false;
 	}
@@ -1607,7 +1609,7 @@ bool DLSSNRFilter::Initialize(
 	}
 
 	D3D11_TEXTURE2D_DESC sharedDesc = outputDesc;
-	sharedDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	sharedDesc.Format = outputDesc.Format;
 	sharedDesc.Width = impl->width;
 	sharedDesc.Height = impl->height;
 	if (!CreateSharedTexture(*impl, sharedDesc, true,

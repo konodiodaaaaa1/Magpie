@@ -19,7 +19,7 @@ public:
 	}
 
 	const char* Name() const noexcept override {
-		return "Graphics Capture";
+		return _IsHdr() ? "Graphics Capture (HDR)" : "Graphics Capture";
 	}
 
 	void OnCursorVisibilityChanged(bool isVisible, bool onDestory) noexcept override;
@@ -30,6 +30,7 @@ protected:
 	FrameSourceState _Update() noexcept override;
 
 private:
+	bool _IsHdr() const noexcept;
 	bool _StartCapture() noexcept;
 
 	void _StopCapture() noexcept;
@@ -47,6 +48,7 @@ private:
 
 	winrt::com_ptr<ITaskbarList> _taskbarList;
 	bool _isSrcStyleChanged = false;
+	uint32_t _diagnosticFrameCount = 0;
 };
 
 }
