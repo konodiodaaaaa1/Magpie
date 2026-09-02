@@ -36,6 +36,10 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="..\Common.Pre.props" />
+  <PropertyGroup>
+    <SDKReferenceDirectoryRoot Condition="'$(SDKReferenceDirectoryRoot)' == '' and Exists('D:\Windows Kits\10\Extension SDKs')">D:\Windows Kits\10\Extension SDKs\</SDKReferenceDirectoryRoot>
+    <SDKExtensionDirectoryRoot Condition="'$(SDKExtensionDirectoryRoot)' == '' and Exists('D:\Windows Kits\10\Extension SDKs')">D:\Windows Kits\10\Extension SDKs\</SDKExtensionDirectoryRoot>
+  </PropertyGroup>
   <PropertyGroup Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <PlatformToolset Condition="$(VS17)">v143</PlatformToolset>
@@ -69,7 +73,7 @@
   <ImportGroup Label="Shared" />
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$([Microsoft.Build.Utilities.ToolLocationHelper]::GetPlatformExtensionSDKLocation(`WindowsDesktop, Version=10.0.26100.0`, $(TargetPlatformIdentifier), $(TargetPlatformVersion),  $(SDKReferenceDirectoryRoot), $(SDKExtensionDirectoryRoot), $(SDKReferenceRegistryRoot)))\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props" Condition="exists('$([Microsoft.Build.Utilities.ToolLocationHelper]::GetPlatformExtensionSDKLocation(`WindowsDesktop, Version=10.0.26100.0`, $(TargetPlatformIdentifier), $(TargetPlatformVersion),  $(SDKReferenceDirectoryRoot), $(SDKExtensionDirectoryRoot), $(SDKReferenceRegistryRoot)))\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props')" />
+    <Import Project="D:\Windows Kits\10\Extension SDKs\WindowsDesktop\10.0.26100.0\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props" Condition="Exists('D:\Windows Kits\10\Extension SDKs\WindowsDesktop\10.0.26100.0\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props')" />
     <Import Project="..\Common.Post.props" />
     <Import Project="..\WinUI.targets" />
   </ImportGroup>
@@ -81,7 +85,7 @@
       <PreprocessorDefinitions>_VSDESIGNER_DONT_LOAD_AS_DLL;DISABLE_XAML_GENERATED_MAIN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- 不知为何 Directory.Build.props 中的不起作用 -->
       <WarningLevel>Level4</WarningLevel>
-      <AdditionalIncludeDirectories>..\Magpie.Core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\Magpie.Core\include;..\Magpie.Core\Generated Files;..\Magpie.Core\Generated Files\winrt;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Condition="$(UseClangCL)">
       <AdditionalOptions>$(LlvmArchitectureSwitch) %(AdditionalOptions)</AdditionalOptions>
@@ -683,7 +687,7 @@
     <ResourceCompile Include="Magpie.rc" />
   </ItemGroup>
   <ItemGroup>
-    <SDKReference Include="WindowsDesktop, Version=10.0.26100.0" />
+    <!-- WindowsDesktop.props is imported explicitly above because this machine stores the SDK on D:. -->
   </ItemGroup>
   <ItemGroup>
     <PRIResource Include="Resources.language-de.resw" />
@@ -837,6 +841,12 @@
     </ItemGroup>
   </Target>
   <!-- 使用 clang-cl 编译 cppwinrt 生成的源文件时关闭警告-->
+  <Target Name="SyncCoreWinRTHeaders" BeforeTargets="ClCompile" Condition="Exists('$(SolutionDir)\obj\$(Platform)\$(Configuration)\Magpie.Core\Generated Files\winrt')">
+    <ItemGroup>
+      <CoreWinRTHeaders Include="$(SolutionDir)\obj\$(Platform)\$(Configuration)\Magpie.Core\Generated Files\winrt\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(CoreWinRTHeaders)" DestinationFiles="@(CoreWinRTHeaders->'$(GeneratedFilesDir)winrt\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="FixClangCLCppWinRT" BeforeTargets="ClCompile" Condition="$(UseClangCL)">
     <ItemGroup>
       <_XamlTypeInfoCpp Include="@(ClCompile)" Condition="'%(Extension)' == '.cpp' And ('%(Filename)' == 'XamlTypeInfo.Impl.g' Or '%(Filename)' == 'XamlTypeInfo.g')" />

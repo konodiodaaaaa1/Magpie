@@ -7,12 +7,16 @@
 
 namespace Magpie {
 
+static bool IsHdrPresentation() noexcept {
+	return ScalingWindow::Get().Options().captureMethod == CaptureMethod::GraphicsCaptureHDR;
+}
+
 static bool ShouldLogPresentationDiagnostic(uint32_t count) noexcept {
 	return count <= 3 || count % 120 == 0;
 }
 
 bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
-	if (ScalingWindow::Get().Options().IsDirectFlipDisabled()) {
+	if (ScalingWindow::Get().Options().IsDirectFlipDisabled() && !IsHdrPresentation()) {
 		// 禁用 DirectFlip 时始终使用 DirectComposition 呈现
 		if (!_ResizeDCompVisual(hwndAttach)) {
 			Logger::Get().Error("_ResizeDCompVisual 失败");
@@ -29,7 +33,7 @@ bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
 	DXGI_SWAP_CHAIN_DESC1 sd{
 		.Width = (UINT)rendererSize.cx,
 		.Height = (UINT)rendererSize.cy,
-		.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+		.Format = IsHdrPresentation() ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM,
 		.SampleDesc = {
 			.Count = 1
 		},
@@ -70,6 +74,10 @@ bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
 		Logger::Get().Error("获取 IDXGISwapChain2 失败");
 		return false;
 	}
+	if (IsHdrPresentation()) {
+		hr = _dxgiSwapChain->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709);
+		if (FAILED(hr)) Logger::Get().ComWarn("SetColorSpace1(scRGB) 失败", hr);
+	}
 
 	uint32_t maximumFrameLatency = bufferCount - 1;
 	for (const EffectOption& effect : ScalingWindow::Get().Options().effects) {
@@ -102,6 +110,10 @@ bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
 	if (FAILED(hr)) {
 		Logger::Get().ComError("获取后缓冲区失败", hr);
 		return false;
+	}
+	if (IsHdrPresentation()) {
+		hr = _dxgiSwapChain->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709);
+		if (FAILED(hr)) Logger::Get().ComWarn("Resize 后设置 scRGB 色彩空间失败", hr);
 	}
 
 	hr = d3dDevice->CreateRenderTargetView(_backBuffer.get(), nullptr, _backBufferRtv.put());
@@ -383,7 +395,7 @@ bool AdaptivePresenter::_ResizeDCompVisual(HWND hwndAttach) noexcept {
 		hr = _dcompDevice->CreateVirtualSurface(
 			(UINT)rendererSize.cx,
 			(UINT)rendererSize.cy,
-			DXGI_FORMAT_R8G8B8A8_UNORM,
+			IsHdrPresentation() ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM,
 			DXGI_ALPHA_MODE_IGNORE,
 			_dcompSurface.put()
 		);

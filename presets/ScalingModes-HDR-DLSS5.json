@@ -1,0 +1,36 @@
+{
+  "scalingModes": [
+    {
+      "name": "HDR DLSS5 Bridge",
+      "effects": [
+        {
+          "name": "HDRToSDR"
+        },
+        {
+          "name": "FrameRate_Filter",
+          "parameters": {
+            "targetFrameRate": 60
+          }
+        },
+        {
+          "name": "DLSSNR\\DLSSNR_AI_Filter",
+          "parameters": {
+            "nrPreset": 0,
+            "style": 0,
+            "intensity": 1,
+            "localToneStrength": 1,
+            "localStructureStrength": 1,
+            "skinStructureStrength": -1,
+            "useAutoMask": 0,
+            "uiCorrection": 0,
+            "guidanceMode": 0,
+            "depthInferenceInterval": 4
+          }
+        },
+        {
+          "name": "SDRToHDR"
+        }
+      ]
+    }
+  ]
+}

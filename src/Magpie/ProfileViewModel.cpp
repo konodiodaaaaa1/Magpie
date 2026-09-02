@@ -331,9 +331,10 @@ IVector<IInspectable> ProfileViewModel::CaptureMethods() const noexcept {
 		ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
 
 	std::vector<IInspectable> captureMethods;
-	captureMethods.reserve(4);
+	captureMethods.reserve(5);
 	captureMethods.push_back(box_value(L"Graphics Capture"));
 	if (Win32Helper::GetOSVersion().Is20H1OrNewer()) {
+		captureMethods.push_back(box_value(L"Graphics Capture (HDR)"));
 		// Desktop Duplication 要求 Win10 20H1+
 		captureMethods.push_back(box_value(L"Desktop Duplication"));
 	}
@@ -344,9 +345,12 @@ IVector<IInspectable> ProfileViewModel::CaptureMethods() const noexcept {
 }
 
 int ProfileViewModel::CaptureMethod() const noexcept {
-	if (Win32Helper::GetOSVersion().Is20H1OrNewer() || _data->captureMethod < CaptureMethod::DesktopDuplication) {
+	if (Win32Helper::GetOSVersion().Is20H1OrNewer()) {
 		return (int)_data->captureMethod;
 	} else {
+		if (_data->captureMethod <= CaptureMethod::GraphicsCaptureHDR) {
+			return (int)CaptureMethod::GraphicsCapture;
+		}
 		return (int)_data->captureMethod - 1;
 	}
 }
@@ -356,7 +360,7 @@ void ProfileViewModel::CaptureMethod(int value) {
 		return;
 	}
 
-	if (!Win32Helper::GetOSVersion().Is20H1OrNewer() && value >= (int)CaptureMethod::DesktopDuplication) {
+	if (!Win32Helper::GetOSVersion().Is20H1OrNewer() && value >= (int)CaptureMethod::GraphicsCaptureHDR) {
 		++value;
 	}
 
@@ -597,6 +601,7 @@ void ProfileViewModel::IsCaptureTitleBar(bool value) {
 
 bool ProfileViewModel::CanCaptureTitleBar() const noexcept {
 	return _data->captureMethod == CaptureMethod::GraphicsCapture
+		|| _data->captureMethod == CaptureMethod::GraphicsCaptureHDR
 		|| _data->captureMethod == CaptureMethod::DesktopDuplication;
 }
 

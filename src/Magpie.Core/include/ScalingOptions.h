@@ -5,6 +5,7 @@ namespace Magpie {
 
 enum class CaptureMethod {
 	GraphicsCapture,
+	GraphicsCaptureHDR,
 	DesktopDuplication,
 	GDI,
 	DwmSharedSurface,
