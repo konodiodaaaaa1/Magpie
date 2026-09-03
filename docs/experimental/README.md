@@ -19,6 +19,7 @@
 - [实验分支 Git 工作流](GIT-WORKFLOW.md)
 - [实验版发布规范](RELEASE-WORKFLOW.md)：版本与标签、双语 Release Note、附件布局、Draft 审核门禁及发布检查。
 - [实验分支交接](../EXPERIMENTAL_HANDOFF_ZH.md)
+- [v0.6.1 Hotfix 说明](../RELEASE_NOTES_v0.6.1-experimental-hotfix.md)
 - [v0.6.1 实验版发布候选说明（未发布）](../RELEASE_NOTES_v0.6.1-experimental.md)
 - [v0.6.1 下一实验版说明（开发中）](../RELEASE_NOTES_NEXT.md)
 - [v0.6.0 Hotfix 说明](../RELEASE_NOTES_v0.6.0-experimental-hotfix.md)

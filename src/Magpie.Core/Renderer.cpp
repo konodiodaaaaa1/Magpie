@@ -156,10 +156,10 @@ static void LogAdapter(IDXGIAdapter4* adapter) noexcept {
 
 static void SetGpuPriority() noexcept {
 	// 来自 https://github.com/obsproject/obs-studio/blob/16cb051a57bb357fe866252c1360ce2c38e2deec/libobs-d3d11/d3d11-subsystem.cpp#L429
-	// 不使用 REALTIME 优先级，它会造成系统不稳定，而且可能会导致源窗口卡顿。
-	// OBS 还调用了 SetGPUThreadPriority，但这个接口似乎无用。
+	// 使用 REALTIME 避免与游戏同时运行时 Magpie 的 GPU 工作被持续抢占。
+	// 这里只更改 GPU 调度类，不会更改 Windows 的 CPU 进程优先级。
 	NTSTATUS status = D3DKMTSetProcessSchedulingPriorityClass(
-		GetCurrentProcess(), D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH);
+		GetCurrentProcess(), D3DKMT_SCHEDULINGPRIORITYCLASS_REALTIME);
 	if (status != STATUS_SUCCESS) {
 		Logger::Get().NTError("D3DKMTSetProcessSchedulingPriorityClass 失败", status);
 	}
