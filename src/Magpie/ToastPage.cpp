@@ -97,7 +97,12 @@ static void UpdateToastPosition(HWND hwndToast, const RECT& frameRect, bool upda
 	);
 }
 
-fire_and_forget ToastPage::ShowMessageOnWindow(std::wstring title, std::wstring message, HWND hwndTarget, bool showLogo) {
+fire_and_forget ToastPage::ShowMessageOnWindow(
+	std::wstring title,
+	std::wstring message,
+	HWND hwndTarget,
+	bool showLogo,
+	std::chrono::milliseconds displayDuration) {
 	DispatcherQueue dispatcher = DispatcherQueue::GetForCurrentThread();
 
 	// !!! HACK !!!
@@ -203,9 +208,9 @@ fire_and_forget ToastPage::ShowMessageOnWindow(std::wstring title, std::wstring 
 	// 第三个参数用于延长 oldTeachingTip 的生存期，确保关闭动画播放完毕后再析构。
 	// TeachingTip 的显示和隐藏动画总计 500ms，显示时长不应少于这个时间。
 	// https://github.com/Blinue/microsoft-ui-xaml/blob/75f7666f5907aad29de1cb2e49405cc06d433fba/dev/TeachingTip/TeachingTip.h#L239-L240
-	[](DispatcherQueue dispatcher, weak_ref<MUXC::TeachingTip> weakCurTeachingTip, MUXC::TeachingTip) -> fire_and_forget {
-		// 显示时长固定 2 秒
-		co_await 2s;
+	[](DispatcherQueue dispatcher, weak_ref<MUXC::TeachingTip> weakCurTeachingTip,
+		MUXC::TeachingTip, std::chrono::milliseconds displayDuration) -> fire_and_forget {
+		co_await displayDuration;
 		co_await dispatcher;
 
 		{
@@ -233,7 +238,7 @@ fire_and_forget ToastPage::ShowMessageOnWindow(std::wstring title, std::wstring 
 		if (curTeachingTip && curTeachingTip.IsLoaded()) {
 			curTeachingTip.IsOpen(false);
 		}
-	}(dispatcher, curTeachingTip, oldTeachingTip);
+	}(dispatcher, curTeachingTip, oldTeachingTip, displayDuration);
 
 	auto weakThis = get_weak();
 

@@ -130,6 +130,7 @@ private:
 
 	IVector<IInspectable> _params{ nullptr };
 	com_ptr<ScalingModeParameter> _inputResolutionPercent;
+	com_ptr<ScalingModeParameter> _residualMultiplier;
 
 	uint32_t _scalingModeIdx;
 	uint32_t _effectIdx;

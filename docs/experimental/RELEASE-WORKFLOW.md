@@ -1,0 +1,192 @@
+# Magpie 实验版发布规范
+
+本文规定 `SAOG0721/Magpie` 实验版 Release 的准备、审核、发布说明与附件结构。目标是让源码、标签、Release Note 和二进制附件能够相互核对，并防止未经审核的 Draft 被意外发布。
+
+## 1. 版本与命名
+
+常规实验版统一使用以下格式：
+
+| 项目 | 格式 | 示例 |
+| --- | --- | --- |
+| 版本号 | `X.Y.Z` | `0.6.0` |
+| Git 标签 | `vX.Y.Z-experimental` | `v0.6.0-experimental` |
+| Release 标题 | `Magpie Experimental vX.Y.Z` | `Magpie Experimental v0.6.0` |
+| 主包 | `Magpie-Experimental-x64.zip` | `Magpie-Experimental-x64.zip` |
+| 本地说明 | `docs/RELEASE_NOTES_vX.Y.Z-experimental.md` | `docs/RELEASE_NOTES_v0.6.0-experimental.md` |
+
+- GitHub Release 始终标记为 **Pre-release**。Draft 只是审核状态，不是版本类型。
+- 首个紧急修复可使用 `vX.Y.Z-experimental-hotfix`；同一基础版本继续修复时在末尾增加序号，例如 `.2`。
+- 标签必须指向完成构建和运行验证的准确提交。已推送或已发布的标签不得移动、覆盖或重建。
+- 常规版的 `version.json`、程序“关于”页、包内 `build-manifest.json`、标签和 Release 标题中的版本必须一致。Hotfix 必须明确继承的基础版本，并在标签、标题和附件名中使用一致的 Hotfix 后缀。
+
+## 2. 发布门禁
+
+发布过程分为四个阶段，每个阶段的授权不能自动延伸到下一阶段。
+
+### 阶段 A：准备源码和文件
+
+1. 在功能分支完成实现和测试，再合并到 `experimental`。
+2. 更新版本说明、包内 README、第三方声明及相关测试文档。
+3. 从准备发布的提交构建完整主包和全部可选附件。
+4. 检查文件名、目录结构、文件大小、SHA-256 和安装说明。
+5. 文件全部准备完成后停止，交由维护者进行本地检查。
+
+在维护者明确确认“文件检查通过”前，不创建 GitHub Release Draft，也不上传附件。
+
+### 阶段 B：创建 Draft
+
+只有在维护者明确批准后才执行：
+
+1. 将准备发布的源码和文档推送到 GitHub。
+2. 确认远端提交与本地构建清单记录的提交一致。
+3. 创建 GitHub Release，设置 `draft: true`、`prerelease: true`。
+4. 上传全部附件，但保持 Draft，不发布。
+5. 将 GitHub Draft 的正文、附件名称、大小和哈希发给维护者复核。
+
+“创建 Draft”“上传 Release”或“提交文件”均不等于授权发布。
+
+### 阶段 C：审核 Release Note
+
+- 中文与英文内容必须完整对应；不能只给英文摘要代替完整英文说明。
+- 维护者在线修改正文后，应将最终内容同步回仓库中的版本说明文件。
+- 仅删除维护者明确指定的过期 Draft。不得顺带删除其他 Draft、Release 或标签。
+- 修改 Draft 正文或附件后仍保持 `draft: true`、`prerelease: true`。
+
+### 阶段 D：发布
+
+只有收到明确的“发布该版本”指令后，才将已审核的 Draft 发布。发布前最后确认：
+
+- 标签、目标提交和版本号正确；
+- `draft` 将从 `true` 变为 `false`，`prerelease` 仍为 `true`；
+- 正文为最终中英文版本；
+- 附件齐全且哈希没有变化；
+- 没有同时发布其他 Draft。
+
+## 3. Release Note 结构
+
+常规版本使用“完整中文在前、分隔线、完整英文在后”的结构：
+
+```markdown
+# Magpie Experimental vX.Y.Z 使用说明
+
+## 本版本更新
+
+### 一句话说明主要变化和更新建议
+
+- 面向用户的变化、默认行为和兼容性。
+
+## 应该下载哪个文件
+
+### 主包：`Magpie-Experimental-x64.zip`
+
+### 可选组件包（如有）
+
+## 功能使用说明（如有）
+
+## 已知问题或排错（如有）
+
+## 文件校验
+
+Contributor: [GitHub 用户名](https://github.com/用户名) 具体贡献。
+
+---
+
+# Magpie Experimental vX.Y.Z User Guide
+
+<!-- 与中文信息等价的完整英文版本，使用相同顺序。 -->
+```
+
+写作要求：
+
+- 开头先说明用户为什么需要更新，以及哪些用户可以不更新。
+- 参数变化必须写明范围、默认值、步进、开关关闭时的行为和旧配置兼容性。
+- 画质、性能或稳定性存在取舍时必须明确写出，不能只描述收益。
+- 性能数字必须同时给出测试 GPU、分辨率、测试条件、单位和近似范围，并说明实际结果会因环境而异。
+- 安装说明使用用户在压缩包中实际看到的文件名和目录，不使用内部构建目录名称。
+- 已知问题应提供可操作的排查或回退方法。
+- Contributor 使用准确的 GitHub 用户名、主页链接和具体贡献内容，不用含糊的“感谢贡献”。README 和 `.all-contributorsrc` 的展示与 GitHub 自动统计是独立事项。
+- Release 页面列出每个上传附件的 SHA-256；仓库内说明应保存相同记录。附件更新后必须同步更新哈希。
+
+## 4. 附件与目录结构
+
+### 完整主包
+
+- `Magpie-Experimental-x64.zip` 是所有用户可独立安装的完整包。
+- 用户必须完全退出 Magpie，将 ZIP 完整解压到新目录后运行。
+- 不允许让用户在压缩包内直接运行，也不能把“只替换 `Magpie.exe`”写成常规更新方式。
+- `Magpie.exe` 与 `resources.pri` 必须来自同一次完整构建。涉及 UI 资源或索引映射时，两者必须一起更新。
+- 包内保留 `LICENSE-Magpie.txt`、`THIRD-PARTY-NOTICES.md`、`README-Experimental.txt` 和 `build-manifest.json`。
+
+### TensorRT 深度估算可选组件
+
+分卷名称：
+
+```text
+Magpie-vX.Y.Z-TensorRT-Depth-Components-x64.7z.001
+Magpie-vX.Y.Z-TensorRT-Depth-Components-x64.7z.002
+```
+
+- 所有分卷放在同一目录，从 `.7z.001` 开始解压。
+- 打开或解压 7z 后，顶层直接包含所有需要合并到 `Magpie.exe` 所在目录的文件和目录。
+- 不再额外套版本目录、`256`、`runtime` 或其他仅用于内部整理的二级包装目录。
+- 内部仍应保留程序运行所要求的真实相对目录结构；这里禁止的是无运行意义的额外外壳。
+- 用户复制解压得到的全部内容到 `Magpie.exe` 所在目录，保持目录结构并允许覆盖同名文件。
+- 不允许只复制个别 DLL，也不得混用其他版本的 CUDA、cuDNN 或 TensorRT 文件。
+- 分卷前先检查归档根目录，再实际完成一次解压和安装测试。
+
+### DLSSNR DLL 选项包
+
+- 使用 `DLSSNR-DLL-Options-<版本>.zip` 命名。
+- 包内明确区分 NVIDIA 原版与社区兼容版本，并附带切换说明、文件版本和 SHA-256。
+- 替换前必须完全退出 Magpie。第三方 DLL 不进入源码仓库或 GitHub 自动生成的源码归档。
+
+### 最小更新与 Hotfix
+
+- 最小更新包不是完整安装包，标题和正文开头必须明确写出这一点。
+- 必须说明适用的准确基础版本、受影响用户、需要替换的全部文件以及恢复完整包的方法。
+- 不得静默替换已发布附件；使用新的 Hotfix 标签和独立 Pre-release，保留原版本记录与哈希。
+- 如果修复涉及 UI 资源，最小包必须同时包含匹配的 `Magpie.exe` 和 `resources.pri`。
+
+## 5. 构建与附件检查
+
+发布构建使用 `scripts/Build-Release.ps1`。正式附件至少满足：
+
+- 工作区无未提交修改，`build-manifest.json` 中 `sourceDirty` 为 `false`；
+- Release x64 构建为 0 error，运行时必需文件齐全；
+- 清单中的版本、完整提交 SHA、平台、功能开关与文件哈希正确；
+- 主包能够解压到新目录并启动，关键功能完成一次目标 GPU 验收；
+- 可选组件能够从第一分卷完整解压，根目录和覆盖路径符合本规范；
+- ZIP/7z 内没有 `bin/`、`obj/`、PDB、LIB、EXP、缓存、日志、本机路径、凭据或未授权 SDK 文件；
+- 每个第三方文件已按 `docs/THIRD_PARTY_AND_REDISTRIBUTION.md` 完成再分发审查；
+- 上传后的附件名称、字节数和 SHA-256 与本地记录逐项一致。
+
+## 6. 发布记录维护
+
+- `docs/RELEASE_NOTES_NEXT.md` 只描述下一版计划和当前公开版本入口。
+- 每个已发布常规版本和 Hotfix 都保留对应的本地 Markdown 快照。
+- 未发布的历史草稿必须在文档标题和索引中明确标记，不能伪装成已发布版本。
+- GitHub 上最终正文发生修改时，应追加文档提交同步本地快照，不改写已经推送的历史。
+- 发布完成后更新 `docs/experimental/README.md` 的索引，并检查 `version.json` 指向当前常规版本或维护者指定的更新入口。
+
+## 7. 历史发布经验
+
+| 版本 | 形成的规范 |
+| --- | --- |
+| v0.5.7 | 多附件 Release 必须逐项说明用途并记录校验值；专有 DLL 选项包与源码分离。 |
+| v0.5.8 | 最小更新必须限定准确基础版本；`Magpie.exe` 与 `resources.pri` 的 UI/逻辑映射不能拆开更新。 |
+| v0.5.9 未发布草稿 | 删除 Draft 不等于删除源码标签；未发布文档必须明确标记，Draft 也不能被当作已发布版本。 |
+| v0.6.0 | Release Note 使用完整中英双语；TensorRT 分卷解压后直接得到需要合并的全部组件，不增加 `256`、`runtime` 或版本包装目录；Contributor 写明具体贡献。 |
+| v0.6.0 Hotfix | 已发布版本的紧急修复使用独立 Pre-release；最小包必须声明不能独立安装，并说明基础版本和完整替换步骤。 |
+
+## 8. 最终检查清单
+
+- [ ] 功能和 GPU 验收通过。
+- [ ] 源码、Release Note、包内 README 和版本信息一致。
+- [ ] 主包及所有可选附件已在本地准备并由维护者检查。
+- [ ] 远端源码提交与 `build-manifest.json` 一致。
+- [ ] Draft 同时设置 `draft: true` 和 `prerelease: true`。
+- [ ] 中英文正文信息完整对应。
+- [ ] 安装路径、默认值、范围、步进、风险和回退方法准确。
+- [ ] Contributor 的用户名、链接和贡献内容准确。
+- [ ] 每个附件的名称、大小和 SHA-256 已复核。
+- [ ] 收到明确发布授权，并且只发布指定 Draft。

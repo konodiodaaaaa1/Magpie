@@ -10,8 +10,10 @@ namespace winrt::Magpie::implementation {
 
 struct ProfileViewModel : ProfileViewModelT<ProfileViewModel>,
                           wil::notify_property_changed_base<ProfileViewModel> {
-	ProfileViewModel(int profileIdx);
+	ProfileViewModel(int profileIdx, bool initializePageData = true);
 	~ProfileViewModel();
+
+	void Rebind(uint32_t index) noexcept;
 
 	IconElement Icon() const noexcept {
 		return _icon;
@@ -45,13 +47,17 @@ struct ProfileViewModel : ProfileViewModelT<ProfileViewModel>,
 
 	void Rename();
 
-	bool CanMoveUp() const noexcept;
+	void RenameFlyout_Opening();
 
-	bool CanMoveDown() const noexcept;
+	void RenameTextBox_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args);
 
-	void MoveUp();
+	int RenameTextBoxSelectionStart() const noexcept {
+		return static_cast<int>(_renameText.size());
+	}
 
-	void MoveDown();
+	void RenameButton_Click();
+
+	bool CanDrag() const noexcept;
 
 	void Delete();
 
@@ -75,8 +81,12 @@ struct ProfileViewModel : ProfileViewModelT<ProfileViewModel>,
 
 	bool HasMultipleMonitors() const noexcept;
 
-	int MultiMonitorUsage() const noexcept;
-	void MultiMonitorUsage(int value);
+	IVector<IInspectable> MonitorOptions() const noexcept {
+		return _monitorOptions;
+	}
+
+	int MonitorSelection() const noexcept;
+	void MonitorSelection(int value);
 
 	int InitialWindowedScaleFactor() const noexcept;
 	void InitialWindowedScaleFactor(int value);
@@ -153,6 +163,8 @@ private:
 
 	void _AdaptersService_AdaptersChanged();
 
+	void _BuildMonitorOptions();
+
 	bool _isProgramExist = true;
 
 	hstring _renameText;
@@ -167,6 +179,9 @@ private:
 	::Magpie::Event<>::EventRevoker _adaptersChangedRevoker;
 
 	IconElement _icon{ nullptr };
+	IVector<IInspectable> _monitorOptions{ nullptr };
+	std::vector<std::wstring> _monitorIds;
+	std::vector<std::wstring> _monitorNames;
 
 	const bool _isDefaultProfile = true;
 	bool _isRenameConfirmButtonEnabled = false;

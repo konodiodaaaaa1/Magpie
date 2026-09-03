@@ -402,6 +402,7 @@ bool ScalingWindow::_PrepareFrontendRender() noexcept {
 	}
 
 	if (srcFocusedChanged) {
+		_renderer->OnSourceFocusChanged();
 		_UpdateFocusStateAsync();
 	}
 
@@ -1147,6 +1148,44 @@ ScalingError ScalingWindow::_CalcFullscreenRendererRect(uint32_t& monitorCount) 
 		}
 
 		monitorCount = GetSystemMetrics(SM_CMONITORS);
+		return ScalingError::NoError;
+	}
+	// 使用用户指定的单个显示器
+	case MultiMonitorUsage::Specific:
+	{
+		bool found = false;
+		for (const Win32Helper::DisplayMonitorInfo& monitor :
+			Win32Helper::GetDisplayMonitors()) {
+			if (CompareStringOrdinal(
+				monitor.deviceId.c_str(), (int)monitor.deviceId.size(),
+				_options.preferredMonitorId.c_str(),
+				(int)_options.preferredMonitorId.size(), TRUE) == CSTR_EQUAL) {
+				_rendererRect = monitor.rect;
+				found = true;
+				break;
+			}
+		}
+
+		if (!found) {
+			// 显示器可能已断开或设备 ID 已变化。回退到源窗口最近的显示器，
+			// 保证旧配置仍能启动缩放。
+			Logger::Get().Warn("找不到首选显示器，回退到距离源窗口最近的显示器");
+			HMONITOR hMonitor = MonitorFromWindow(
+				_srcTracker.Handle(), MONITOR_DEFAULTTONULL);
+			MONITORINFO monitorInfo{ .cbSize = sizeof(monitorInfo) };
+			if (!hMonitor || !GetMonitorInfo(hMonitor, &monitorInfo)) {
+				Logger::Get().Win32Error("GetMonitorInfo 失败");
+				return ScalingError::ScalingFailedGeneral;
+			}
+			_rendererRect = monitorInfo.rcMonitor;
+		}
+
+		if (ScalingError error = _InitialMoveSrcWindowInFullscreen();
+			error != ScalingError::NoError) {
+			return error;
+		}
+
+		monitorCount = 1;
 		return ScalingError::NoError;
 	}
 	default:

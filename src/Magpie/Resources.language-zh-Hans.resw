@@ -142,10 +142,10 @@
     <value>按组合键以更改此快捷键</value>
   </data>
   <data name="ShortcutDialog_InUse" xml:space="preserve">
-    <value>此快捷键已被占用</value>
+    <value>此快捷键已被系统或其他程序占用，请关闭占用程序或更换组合键</value>
   </data>
   <data name="ShortcutDialog_InvalidShortcut" xml:space="preserve">
-    <value>无效的快捷键</value>
+    <value>快捷键必须以 Windows 键、Ctrl、Alt 或 Shift 开头，请重新输入</value>
   </data>
   <data name="ShortcutDialog_Save" xml:space="preserve">
     <value>保存</value>
@@ -241,13 +241,28 @@
     <value>启动</value>
   </data>
   <data name="ScalingModes_General_Export.Text" xml:space="preserve">
-    <value>导出</value>
+    <value>配置导出</value>
   </data>
   <data name="ScalingModes_General_Import.Text" xml:space="preserve">
-    <value>导入</value>
+    <value>配置导入</value>
   </data>
   <data name="ScalingModes_General_MoreOptions.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
     <value>更多选项</value>
+  </data>
+  <data name="ScalingModes_General_Reset.Text" xml:space="preserve">
+    <value>重置配置</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Title" xml:space="preserve">
+    <value>重置缩放模式配置？</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Content" xml:space="preserve">
+    <value>这将删除所有当前缩放模式并恢复默认缩放模式。自定义程序配置将改为使用全局默认缩放模式。此操作无法撤销。</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Confirm" xml:space="preserve">
+    <value>重置</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Cancel" xml:space="preserve">
+    <value>取消</value>
   </data>
   <data name="Settings_Launch_AlwaysRunAsAdmin.Description" xml:space="preserve">
     <value>以管理员身份运行时才能使用此选项</value>
@@ -302,6 +317,15 @@
   </data>
   <data name="ScalingModes_Rename.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
     <value>重命名</value>
+  </data>
+  <data name="ScalingModes_Duplicate.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>复制</value>
+  </data>
+  <data name="ScalingModes_DuplicateSuffix" xml:space="preserve">
+    <value> - 副本</value>
+  </data>
+  <data name="ScalingModes_DragHandle.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>拖动以重新排序</value>
   </data>
   <data name="ScalingModes_RenameFlyout_OK.Content" xml:space="preserve">
     <value>确定</value>
@@ -420,6 +444,9 @@
   <data name="Profile_General_Multimonitor_Intersected.Content" xml:space="preserve">
     <value>源窗口跨越的所有显示器</value>
   </data>
+  <data name="Profile_General_Multimonitor_Unavailable" xml:space="preserve">
+    <value>未连接</value>
+  </data>
   <data name="Profile_General_ScalingMode.Header" xml:space="preserve">
     <value>缩放模式</value>
   </data>
@@ -517,7 +544,7 @@
     <value>Magpie 已是最新</value>
   </data>
   <data name="About_Version_UpdateToDate_DownloadFailed.Text" xml:space="preserve">
-    <value>下载失败</value>
+    <value>下载失败。请检查网络和磁盘空间后重试，或从发布页手动下载</value>
   </data>
   <data name="About_Version_UpdateToDate_Downloading.Text" xml:space="preserve">
     <value>下载中</value>
@@ -653,13 +680,13 @@
     <value>未知效果</value>
   </data>
   <data name="ScalingModes_HasUnkownEffects.Title" xml:space="preserve">
-    <value>部分效果未能正确解析</value>
+    <value>此缩放模式包含未知效果，暂时无法使用。请删除未知效果，或恢复对应效果文件并重新启动 Magpie。</value>
   </data>
   <data name="Dialog_Export_Title" xml:space="preserve">
-    <value>导出缩放模式</value>
+    <value>配置导出</value>
   </data>
   <data name="Dialog_Import_Title" xml:space="preserve">
-    <value>导入缩放模式</value>
+    <value>配置导入</value>
   </data>
   <data name="About_Version_UpdateSettings.Header" xml:space="preserve">
     <value>更新设置</value>
@@ -764,31 +791,31 @@
     <value>如果触控支持失效，Magpie 可能会在缩放前请求管理员权限以执行修复。</value>
   </data>
   <data name="Home_Advanced_SimulateExclusiveFullscreen_InfoBar.Title" xml:space="preserve">
-    <value>此选项和一些旧游戏不兼容，请谨慎使用。</value>
+    <value>此选项和部分旧游戏不兼容；如果出现黑屏、焦点或弹窗异常，请关闭此选项。</value>
   </data>
   <data name="Message_InvalidScalingMode" xml:space="preserve">
-    <value>缩放模式无效。</value>
+    <value>当前配置没有可用的缩放模式。请选择其他缩放模式，或为当前模式添加并修复效果。</value>
   </data>
   <data name="Message_TouchSupport" xml:space="preserve">
-    <value>启用触控支持失败。</value>
+    <value>触控支持组件启动失败。请暂时关闭触控支持后重试；如需使用触控，请以管理员身份重新启用。</value>
   </data>
   <data name="Message_InvalidSourceWindow" xml:space="preserve">
-    <value>不支持缩放这个窗口。</value>
+    <value>无法缩放这个窗口。请确认它仍在运行、未停止响应、位于显示器内且窗口尺寸不小于 64×64。</value>
   </data>
   <data name="Message_Maximized" xml:space="preserve">
-    <value>已禁止缩放最大化或全屏的窗口。你可以在主页里更改这个行为。</value>
+    <value>当前禁止缩放最大化或全屏窗口。请先还原窗口，或在“主页 → 高级”中启用“允许缩放最大化或全屏的窗口”。</value>
   </data>
   <data name="Message_LowIntegrityLevel" xml:space="preserve">
-    <value>Magpie 需要以管理员身份运行才能缩放这个窗口。</value>
+    <value>目标窗口的权限高于 Magpie。请关闭 Magpie，并以管理员身份重新运行后重试。</value>
   </data>
   <data name="Message_ScalingFailedGeneral" xml:space="preserve">
-    <value>详情请参阅日志。</value>
+    <value>缩放初始化失败。请退出缩放、重新打开目标窗口并重试；如果仍然失败，请重新启动 Magpie。</value>
   </data>
   <data name="Message_CaptureFailed" xml:space="preserve">
-    <value>无法捕获这个窗口，请尝试切换捕获方式。</value>
+    <value>无法捕获这个窗口。请确认窗口没有最小化，并在当前配置中将捕获方式改为“默认”或 Graphics Capture 后重试。</value>
   </data>
   <data name="Message_CreateFenceFailed" xml:space="preserve">
-    <value>当前显卡不支持 ID3D11Device5::CreateFence，请尝试切换显卡或更新驱动。</value>
+    <value>所选显卡或驱动不支持缩放所需的同步功能。请在当前配置的“性能”中切换显卡，或更新显卡驱动后重试。</value>
   </data>
   <data name="Message_NvidiaVsrPathUnsupported" xml:space="preserve">
     <value>NVIDIA VSR 初始化失败（错误 -2）。请将 Magpie 完整解压到仅含英文字母和数字的路径，所有上级目录都不要包含中文或特殊字符，例如 C:\Magpie\，然后重新运行。</value>
@@ -797,7 +824,7 @@
     <value>缩放失败</value>
   </data>
   <data name="Profile_Performance_NoGraphicsCard.Title" xml:space="preserve">
-    <value>由于找不到兼容的显卡，将使用 CPU 渲染。很可能达不到理想性能。</value>
+    <value>找不到兼容的显卡，将使用性能较低的 CPU 渲染。请确认显卡驱动已经正确安装并更新。</value>
   </data>
   <data name="Home_Advanced_MinFrameRate.Header" xml:space="preserve">
     <value>最小帧率</value>
@@ -839,10 +866,10 @@
     <value>取消操作</value>
   </data>
   <data name="Message_BannedInWindowedMode" xml:space="preserve">
-    <value>不支持窗口模式缩放这个窗口。</value>
+    <value>当前窗口已最大化或处于全屏状态。请先还原窗口或退出全屏，也可以改用全屏模式缩放。</value>
   </data>
   <data name="Message_InvalidCropping" xml:space="preserve">
-    <value>无法应用自定义裁剪。</value>
+    <value>裁剪后的区域过小或无效。请减小裁剪值，确保宽高至少为 64 像素，或关闭自定义裁剪。</value>
   </data>
   <data name="Home_Activation.Description" xml:space="preserve">
     <value>按下快捷键可缩放前台窗口或停止缩放。</value>
@@ -890,7 +917,7 @@
     <value>工具栏状态切换快捷键</value>
   </data>
   <data name="Message_ToolbarIn3DGameMode" xml:space="preserve">
-    <value>3D 游戏模式下不支持工具栏。</value>
+    <value>3D 游戏模式不支持工具栏。请停止缩放并关闭 3D 游戏模式，或使用缩放快捷键进行控制。</value>
   </data>
   <data name="Message_ToolbarNewState" xml:space="preserve">
     <value>工具栏：{}</value>
@@ -911,7 +938,7 @@
     <value>性能分析器窗口</value>
   </data>
   <data name="Message_Windowed3DGameMode" xml:space="preserve">
-    <value>3D 游戏模式下不支持窗口模式缩放。</value>
+    <value>当前配置启用了 3D 游戏模式，无法使用窗口模式缩放。请关闭 3D 游戏模式，或改用全屏模式缩放。</value>
   </data>
   <data name="Profile_General_3DGameMode.Description" xml:space="preserve">
     <value>针对 3D 游戏优化，不支持工具栏和窗口模式缩放</value>
@@ -929,7 +956,7 @@
     <value>已保存截图 {}</value>
   </data>
   <data name="Message_ScreenshotFailed" xml:space="preserve">
-    <value>截图失败。</value>
+    <value>无法保存截图。请检查截图保存目录是否存在且可写，或在主页中更换保存位置后重试。</value>
   </data>
   <data name="Overlay_Toolbar_TakeScreenshot_Description" xml:space="preserve">
     <value>右键以导出中间结果</value>
@@ -965,7 +992,7 @@
     <value>仅适用于全屏模式缩放</value>
   </data>
   <data name="Home_TouchSupport_Warn.Title" xml:space="preserve">
-    <value>工具栏不支持触控输入。</value>
+    <value>工具栏不支持触控输入，请使用鼠标或快捷键操作。</value>
   </data>
   <data name="Overlay_Toolbar_Close_Description" xml:space="preserve">
     <value>右键以关闭工具栏</value>
@@ -983,19 +1010,19 @@
     <value>窗口模式缩放</value>
   </data>
   <data name="Message_ExportScalingModesFailed" xml:space="preserve">
-    <value>导出缩放模式失败。</value>
+    <value>导出缩放模式失败。请选择可写入的位置，并检查文件是否被占用以及磁盘空间是否充足。</value>
   </data>
   <data name="Message_ImportScalingModesFailed" xml:space="preserve">
-    <value>导入缩放模式失败。</value>
+    <value>导入缩放模式失败。请选择有效且可读取的缩放模式 JSON 文件，并确认文件内容没有损坏。</value>
   </data>
   <data name="Home_Advanced_DeveloperOptions_LocateLogs.Header" xml:space="preserve">
     <value>打开日志位置</value>
   </data>
   <data name="Message_WindowedDesktopDuplication" xml:space="preserve">
-    <value>Desktop Duplication 捕获不支持窗口模式缩放。</value>
+    <value>Desktop Duplication 不支持窗口模式缩放。请将捕获方式改为“默认”或 Graphics Capture，或改用全屏模式缩放。</value>
   </data>
   <data name="Profile_General_DesktopDuplicationWarning.Title" xml:space="preserve">
-    <value>此捕获方式和窗口模式缩放不兼容。</value>
+    <value>Desktop Duplication 不支持窗口模式缩放。请改用“默认”或 Graphics Capture，或使用全屏模式缩放。</value>
   </data>
   <data name="Settings_Launch_RunAtStartup.Description" xml:space="preserve">
     <value>启用了“在系统托盘上显示应用程序”时将不会显示主窗口</value>

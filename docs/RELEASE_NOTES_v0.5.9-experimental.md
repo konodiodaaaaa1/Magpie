@@ -1,4 +1,6 @@
-# Magpie Experimental v0.5.9 使用说明
+# Magpie Experimental v0.5.9 使用说明（未发布历史草稿）
+
+> 此版本的 GitHub Release Draft 已删除，从未正式发布。本文件仅保留为 0.6.0 发布准备过程的历史参考，不应作为可下载版本或当前安装说明引用。
 
 ## 本版本更新
 

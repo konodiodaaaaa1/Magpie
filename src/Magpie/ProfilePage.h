@@ -19,20 +19,6 @@ struct ProfilePage : ProfilePageT<ProfilePage> {
 
 	void CursorScalingComboBox_SelectionChanged(IInspectable const&, SelectionChangedEventArgs const&);
 
-	void RenameMenuItem_Click(IInspectable const&, RoutedEventArgs const&);
-
-	void RenameFlyout_Opening(IInspectable const&, IInspectable const&);
-
-	void RenameConfirmButton_Click(IInspectable const&, RoutedEventArgs const&);
-
-	void RenameTextBox_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args);
-
-	void ReorderMenuItem_Click(IInspectable const&, RoutedEventArgs const&);
-
-	void DeleteMenuItem_Click(IInspectable const&, RoutedEventArgs const&);
-
-	void DeleteButton_Click(IInspectable const&, RoutedEventArgs const&);
-
 	void LaunchParametersTextBox_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args);
 
 private:

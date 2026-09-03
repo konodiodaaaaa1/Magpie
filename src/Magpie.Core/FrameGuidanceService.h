@@ -35,7 +35,6 @@ public:
 	) noexcept;
 	bool Resize(
 		FrameGuidanceExtent sourceExtent,
-		FrameGuidanceFrameId currentFrameId,
 		const FrameGuidanceRequirements& requirements
 	) noexcept;
 	void ResetHistory(FrameGuidanceResetReason reason) noexcept;

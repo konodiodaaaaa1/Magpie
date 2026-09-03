@@ -88,6 +88,12 @@ static void WriteProfile(rapidjson::PrettyWriter<rapidjson::StringBuffer>& write
 	writer.Uint((uint32_t)profile.captureMethod);
 	writer.Key("multiMonitorUsage");
 	writer.Uint((uint32_t)profile.multiMonitorUsage);
+	if (!profile.preferredMonitorId.empty()) {
+		writer.Key("preferredMonitorId");
+		writer.String(StrHelper::UTF16ToUTF8(profile.preferredMonitorId).c_str());
+		writer.Key("preferredMonitorName");
+		writer.String(StrHelper::UTF16ToUTF8(profile.preferredMonitorName).c_str());
+	}
 
 	writer.Key("initialWindowedScaleFactor");
 	writer.Uint((uint32_t)profile.initialWindowedScaleFactor);
@@ -1108,6 +1114,8 @@ bool AppSettings::_LoadProfile(
 		}
 		profile.multiMonitorUsage = (MultiMonitorUsage)multiMonitorUsage;
 	}
+	JsonHelper::ReadString(profileObj, "preferredMonitorId", profile.preferredMonitorId, true);
+	JsonHelper::ReadString(profileObj, "preferredMonitorName", profile.preferredMonitorName, true);
 
 	{
 		uint32_t factor = (uint32_t)InitialWindowedScaleFactor::Auto;
@@ -1270,7 +1278,7 @@ bool AppSettings::_SetDefaultShortcuts() noexcept {
 }
 
 void AppSettings::_SetDefaultScalingModes() noexcept {
-	_scalingModes.resize(7);
+	_scalingModes.resize(6);
 
 	// Lanczos
 	{
@@ -1294,18 +1302,9 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 		rcas.name = L"FSR\\FSR_RCAS";
 		rcas.parameters[L"sharpness"] = 0.87f;
 	}
-	// DLSS SR
-	{
-		auto& dlssSr = _scalingModes[2];
-		dlssSr.name = L"DLSS SR";
-
-		auto& effect = dlssSr.effects.emplace_back();
-		effect.name = L"DLSS\\DLSS_SR";
-		effect.scalingType = ::Magpie::ScalingType::Fit;
-	}
 	// RTX Video VSR Ultra
 	{
-		auto& vsrUltra = _scalingModes[3];
+		auto& vsrUltra = _scalingModes[2];
 		vsrUltra.name = L"RTX Video VSR Ultra";
 		vsrUltra.effects.resize(2);
 		vsrUltra.effects[0].name = L"FrameRate_Filter";
@@ -1315,7 +1314,7 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 	}
 	// DLSS Frame Generation
 	{
-		auto& dlssFg = _scalingModes[4];
+		auto& dlssFg = _scalingModes[3];
 		dlssFg.name = L"DLSSFG";
 		dlssFg.effects.resize(2);
 		dlssFg.effects[0].name = L"FrameRate_Filter";
@@ -1323,7 +1322,7 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 	}
 	// XeSS Frame Generation
 	{
-		auto& xessFg = _scalingModes[5];
+		auto& xessFg = _scalingModes[4];
 		xessFg.name = L"XeSSFG";
 		xessFg.effects.resize(2);
 		xessFg.effects[0].name = L"FrameRate_Filter";
@@ -1331,7 +1330,7 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 	}
 	// DLSS Ray Reconstruction
 	{
-		auto& dlssNr = _scalingModes[6];
+		auto& dlssNr = _scalingModes[5];
 		dlssNr.name = L"DLSSNR";
 		dlssNr.effects.resize(2);
 		dlssNr.effects[0].name = L"FrameRate_Filter";
@@ -1340,6 +1339,16 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 
 	// 全局缩放模式默认为 Lanczos
 	_defaultProfile.scalingMode = 0;
+}
+
+void AppSettings::ResetScalingModes() noexcept {
+	_scalingModes.clear();
+	for (Profile& profile : _profiles) {
+		// 自定义配置在原缩放模式被删除后回退到全局默认值。
+		profile.scalingMode = -1;
+	}
+	_SetDefaultScalingModes();
+	SaveAsync();
 }
 
 static std::wstring FindOldConfig(const wchar_t* localAppDataDir) noexcept {

@@ -30,6 +30,14 @@ DLSSNR 参数建议 / DLSSNR defaults
 - Automatic Mask / NR UI Correction: Off
 - Frame Guidance: 0 Available
 - Depth Inference Interval: 4
+- Input Resolution: Off；启用后才显示 Residual Multiplier
+- Residual Multiplier: 1.00（范围 1.00–2.00，步进 0.05）
+
+配置管理 / Configuration management
+
+- 缩放模式和效果器支持拖拽排序；缩放模式支持复制、重命名、删除和重置默认配置。
+- 非默认程序配置支持从配置栏直接启动、打开更多选项和拖拽排序。
+- 全屏缩放可在程序配置中选择具体物理显示器；显示器断开时会在启动时回退到可用显示器。
 
 DLSSNR DLL
 

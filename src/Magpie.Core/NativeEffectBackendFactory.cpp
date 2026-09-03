@@ -73,6 +73,8 @@ NativeEffectBackendResult CreateNativeEffectBackend(
 			.inputResolutionPercent = static_cast<uint32_t>(std::clamp(
 				static_cast<int>(std::lround(
 					getParameter("inputResolutionPercent", 100.0f))), 25, 100)),
+			.residualMultiplier = std::clamp(
+				getParameter("residualMultiplier", 1.0f), 1.0f, 2.0f),
 			.preset = std::clamp(
 				static_cast<int>(std::lround(
 					getParameter("nrPreset", 0.0f))), 0, 3),

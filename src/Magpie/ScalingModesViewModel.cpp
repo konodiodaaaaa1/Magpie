@@ -18,6 +18,9 @@ using namespace Magpie;
 namespace winrt::Magpie::implementation {
 
 ScalingModesViewModel::ScalingModesViewModel() {
+	_scalingModesChangedRevoker = _scalingModes.VectorChanged(
+		auto_revoke, { this, &ScalingModesViewModel::_ScalingModes_VectorChanged });
+
 	_AddScalingModes();
 
 	_scalingModeAddedRevoker = ScalingModesService::Get().ScalingModeAdded(
@@ -26,6 +29,8 @@ ScalingModesViewModel::ScalingModesViewModel() {
 		auto_revoke, std::bind_front(&ScalingModesViewModel::_ScalingModesService_Moved, this));
 	_scalingModeRemovedRevoker = ScalingModesService::Get().ScalingModeRemoved(
 		auto_revoke, std::bind_front(&ScalingModesViewModel::_ScalingModesService_Removed, this));
+	_scalingModesResetRevoker = ScalingModesService::Get().ScalingModesReset(
+		auto_revoke, std::bind_front(&ScalingModesViewModel::_ScalingModesService_Reset, this));
 }
 
 static std::optional<std::filesystem::path> OpenFileDialogForJson(
@@ -80,7 +85,8 @@ fire_and_forget ScalingModesViewModel::Export() noexcept {
 
 	if (!Win32Helper::WriteTextFile(fileName->c_str(), { json.GetString(), json.GetLength() })) {
 		const hstring failedMsg = resourceLoader.GetString(L"Message_ExportScalingModesFailed");
-		ToastService::Get().ShowMessageInApp({}, failedMsg.c_str());
+		ToastService::Get().ShowMessageInApp(
+			{}, failedMsg.c_str(), std::chrono::seconds(5));
 	}
 }
 
@@ -133,45 +139,45 @@ fire_and_forget ScalingModesViewModel::Import() {
 	}
 
 	const hstring failedMsg = resourceLoader.GetString(L"Message_ImportScalingModesFailed");
-	ToastService::Get().ShowMessageInApp({}, failedMsg.c_str());
+	ToastService::Get().ShowMessageInApp(
+		{}, failedMsg.c_str(), std::chrono::seconds(5));
 }
 
-void ScalingModesViewModel::PrepareForAdd() {
-	std::vector<IInspectable> copyFromList;
-
-	ResourceLoader resourceLoader =
-		ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
-	copyFromList.push_back(box_value(resourceLoader.GetString(
-		L"ScalingModes_NewScalingModeFlyout_CopyFrom_None")));
-	
-	for (const auto& scalingMode : AppSettings::Get().ScalingModes()) {
-		copyFromList.push_back(box_value(scalingMode.name));
-	}
-	_newScalingModeCopyFromList = single_threaded_vector(std::move(copyFromList));
-	RaisePropertyChanged(L"NewScalingModeCopyFromList");
-
-	_newScalingModeName.clear();
-	RaisePropertyChanged(L"NewScalingModeName");
-
-	_newScalingModeCopyFrom = 0;
-	RaisePropertyChanged(L"NewScalingModeCopyFrom");
-}
-
-void ScalingModesViewModel::NewScalingModeName(const hstring& value) noexcept {
-	_newScalingModeName = value;
-	RaisePropertyChanged(L"NewScalingModeName");
-	RaisePropertyChanged(L"IsAddButtonEnabled");
+bool ScalingModesViewModel::CanReorderScalingModes() const noexcept {
+	return _scalingModes.Size() > 1;
 }
 
 void ScalingModesViewModel::AddScalingMode() {
-	ScalingModesService::Get().AddScalingMode(_newScalingModeName, _newScalingModeCopyFrom - 1);
+	ResourceLoader resourceLoader =
+		ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
+	std::wstring baseName(resourceLoader.GetString(L"ScalingModes_NewScalingMode/Text"));
+	std::wstring name = baseName;
+
+	const auto& scalingModes = AppSettings::Get().ScalingModes();
+	for (uint32_t suffix = 2;; ++suffix) {
+		const bool exists = std::any_of(scalingModes.begin(), scalingModes.end(), [&name](const ScalingMode& mode) {
+			return mode.name == name;
+		});
+		if (!exists) {
+			break;
+		}
+		name = baseName + L" (" + std::to_wstring(suffix) + L")";
+	}
+
+	ScalingModesService::Get().AddScalingMode(name, -1);
 }
 
-fire_and_forget ScalingModesViewModel::_AddScalingModes(bool isInitialExpanded) {
+fire_and_forget ScalingModesViewModel::_AddScalingModes(
+	bool isInitialExpanded,
+	bool shouldAutoRename) {
+	_pendingInitialExpanded = _pendingInitialExpanded || isInitialExpanded;
+	_pendingAutoRename = _pendingAutoRename || shouldAutoRename;
+
 	if (_addingScalingModes) {
 		co_return;
 	}
 	_addingScalingModes = true;
+	const uint32_t collectionGeneration = _collectionGeneration;
 
 	ScalingModesService& scalingModesService = ScalingModesService::Get();
 	uint32_t total = scalingModesService.GetScalingModeCount();
@@ -179,14 +185,26 @@ fire_and_forget ScalingModesViewModel::_AddScalingModes(bool isInitialExpanded) 
 
 	if (total - curSize <= 5) {
 		for (; curSize < total; ++curSize) {
-			_scalingModes.Append(make<ScalingModeItem>(curSize, isInitialExpanded));
+			const bool isNewest = curSize + 1 == total;
+			const bool expandNewest = isNewest &&
+				std::exchange(_pendingInitialExpanded, false);
+			const bool renameNewest = isNewest &&
+				std::exchange(_pendingAutoRename, false);
+			_updatingScalingModes = true;
+			_scalingModes.Append(make<ScalingModeItem>(
+				curSize,
+				expandNewest,
+				renameNewest));
+			_updatingScalingModes = false;
 		}
 	} else {
 		assert(!isInitialExpanded);
 
 		// 延迟加载
 		for (int j = 0; j < 5; ++j) {
-			_scalingModes.Append(make<ScalingModeItem>(curSize++, false));
+			_updatingScalingModes = true;
+			_scalingModes.Append(make<ScalingModeItem>(curSize++, false, false));
+			_updatingScalingModes = false;
 		}
 
 		auto weakThis = get_weak();
@@ -198,12 +216,25 @@ fire_and_forget ScalingModesViewModel::_AddScalingModes(bool isInitialExpanded) 
 			if (!weakThis.get()) {
 				co_return;
 			}
+			if (collectionGeneration != _collectionGeneration) {
+				_addingScalingModes = false;
+				_AddScalingModes();
+				co_return;
+			}
 
 			total = scalingModesService.GetScalingModeCount();
 			curSize = _scalingModes.Size();
 
 			if (curSize < total) {
-				_scalingModes.Append(make<ScalingModeItem>(curSize++, false));
+				const bool isNewest = curSize + 1 == total;
+				const bool expandNewest = isNewest &&
+					std::exchange(_pendingInitialExpanded, false);
+				const bool renameNewest = isNewest &&
+					std::exchange(_pendingAutoRename, false);
+				_updatingScalingModes = true;
+				_scalingModes.Append(make<ScalingModeItem>(
+					curSize++, expandNewest, renameNewest));
+				_updatingScalingModes = false;
 			}
 			
 			if (curSize >= total) {
@@ -213,25 +244,73 @@ fire_and_forget ScalingModesViewModel::_AddScalingModes(bool isInitialExpanded) 
 	}
 
 	_addingScalingModes = false;
+	RaisePropertyChanged(L"CanReorderScalingModes");
 }
 
 void ScalingModesViewModel::_ScalingModesService_Added(EffectAddedWay way) {
 	// 不支持在事件回调中修改事件本身，因此延迟执行
 	App::Get().Dispatcher().TryEnqueue([this, way]() {
-		_AddScalingModes(way == EffectAddedWay::Add);
+		_AddScalingModes(
+			way != EffectAddedWay::Import,
+			way == EffectAddedWay::Add);
 	});
 }
 
-void ScalingModesViewModel::_ScalingModesService_Moved(uint32_t index, bool isMoveUp) {
-	const uint32_t targetIndex = isMoveUp ? index - 1 : index + 1;
+void ScalingModesViewModel::_ScalingModesService_Moved(uint32_t fromIndex, uint32_t toIndex) {
+	if (_handlingUserReorder) {
+		return;
+	}
 
-	IInspectable targetItem = _scalingModes.GetAt(targetIndex);
-	_scalingModes.RemoveAt(targetIndex);
-	_scalingModes.InsertAt(index, targetItem);
+	_updatingScalingModes = true;
+	IInspectable movedItem = _scalingModes.GetAt(fromIndex);
+	_scalingModes.RemoveAt(fromIndex);
+	_scalingModes.InsertAt(toIndex, movedItem);
+	_updatingScalingModes = false;
 }
 
 void ScalingModesViewModel::_ScalingModesService_Removed(uint32_t index) {
+	_updatingScalingModes = true;
 	_scalingModes.RemoveAt(index);
+	_updatingScalingModes = false;
+	RaisePropertyChanged(L"CanReorderScalingModes");
+}
+
+void ScalingModesViewModel::_ScalingModesService_Reset() {
+	++_collectionGeneration;
+	_pendingInitialExpanded = false;
+	_pendingAutoRename = false;
+	_movingFromIdx = std::numeric_limits<uint32_t>::max();
+
+	_updatingScalingModes = true;
+	_scalingModes.Clear();
+	_updatingScalingModes = false;
+	_AddScalingModes();
+	RaisePropertyChanged(L"CanReorderScalingModes");
+}
+
+void ScalingModesViewModel::_ScalingModes_VectorChanged(
+	IObservableVector<IInspectable> const&,
+	IVectorChangedEventArgs const& args) {
+	if (_updatingScalingModes) {
+		return;
+	}
+
+	if (args.CollectionChange() == CollectionChange::ItemRemoved) {
+		_movingFromIdx = args.Index();
+		return;
+	}
+	if (args.CollectionChange() != CollectionChange::ItemInserted ||
+		_movingFromIdx == std::numeric_limits<uint32_t>::max()) {
+		return;
+	}
+
+	const uint32_t movingToIdx = args.Index();
+	const uint32_t movingFromIdx = std::exchange(
+		_movingFromIdx,
+		std::numeric_limits<uint32_t>::max());
+	_handlingUserReorder = true;
+	ScalingModesService::Get().MoveScalingMode(movingFromIdx, movingToIdx);
+	_handlingUserReorder = false;
 }
 
 }

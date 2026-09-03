@@ -13,7 +13,7 @@ struct ScalingModeEffectItem;
 
 struct ScalingModeItem : ScalingModeItemT<ScalingModeItem>,
                          wil::notify_property_changed_base<ScalingModeItem> {
-	ScalingModeItem(uint32_t index, bool isInitialExpanded);
+	ScalingModeItem(uint32_t index, bool isInitialExpanded, bool shouldAutoRename);
 
 	void AddEffect(const hstring& fullName);
 
@@ -53,17 +53,13 @@ struct ScalingModeItem : ScalingModeItemT<ScalingModeItem>,
 
 	void RenameButton_Click();
 
-	bool CanMoveUp() const noexcept;
+	bool TakeAutoRenameRequest() noexcept;
 
-	bool CanMoveDown() const noexcept;
+	bool CanDrag() const noexcept;
 
-	void MoveUp() noexcept;
-
-	void MoveDown() noexcept;
+	void Duplicate();
 
 	bool CanReorderEffects() const noexcept;
-
-	bool IsShowMoveButtons() const noexcept;
 
 	void Remove();
 
@@ -82,7 +78,7 @@ private:
 
 	void _ScalingModesService_Added(::Magpie::EffectAddedWay);
 
-	void _ScalingModesService_Moved(uint32_t index, bool isMoveUp);
+	void _ScalingModesService_Moved(uint32_t fromIndex, uint32_t toIndex);
 
 	void _ScalingModesService_Removed(uint32_t index);
 
@@ -90,9 +86,9 @@ private:
 
 	void _ScalingModeEffectItem_Removed(uint32_t index);
 
-	void _ScalingModeEffectItem_Moved(ScalingModeEffectItem& sender, bool isUp);
-
 	com_ptr<ScalingModeEffectItem> _CreateScalingModeEffectItem(uint32_t scalingModeIdx, uint32_t effectIdx);
+
+	void _RefreshEffectDragState();
 
 	::Magpie::ScalingMode& _Data() noexcept;
 	const ::Magpie::ScalingMode& _Data() const noexcept;
@@ -100,10 +96,10 @@ private:
 	uint32_t _index = 0;
 	IObservableVector<IInspectable> _effects{ nullptr };
 	
-	uint32_t _movingFromIdx = 0;
+	uint32_t _movingFromIdx = std::numeric_limits<uint32_t>::max();
 
 	::Magpie::Event<::Magpie::EffectAddedWay>::EventRevoker _scalingModeAddedRevoker;
-	::Magpie::Event<uint32_t, bool>::EventRevoker _scalingModeMovedRevoker;
+	::Magpie::Event<uint32_t, uint32_t>::EventRevoker _scalingModeMovedRevoker;
 	::Magpie::Event<uint32_t>::EventRevoker _scalingModeRemovedRevoker;
 	IObservableVector<IInspectable>::VectorChanged_revoker _effectsChangedRevoker;
 
@@ -115,6 +111,7 @@ private:
 	bool _isMovingEffects = true;
 	bool _isRenameButtonEnabled = false;
 	bool _isInitialExpanded = false;
+	bool _shouldAutoRename = false;
 };
 
 }

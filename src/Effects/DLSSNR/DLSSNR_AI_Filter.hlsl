@@ -22,6 +22,14 @@ int enableInputResolutionScaling;
 int inputResolutionPercent;
 
 //!PARAMETER
+//!LABEL Residual Multiplier
+//!DEFAULT 1
+//!MIN 1
+//!MAX 2
+//!STEP 0.05
+float residualMultiplier;
+
+//!PARAMETER
 //!LABEL NR Preset (0 Default, 1 Preset #1, 2 Preset #2, 3 Preset #3)
 //!DEFAULT 0
 //!MIN 0

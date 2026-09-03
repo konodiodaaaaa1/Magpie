@@ -15,6 +15,7 @@ enum class MultiMonitorUsage {
 	Closest,
 	Intersected,
 	All,
+	Specific,
 	COUNT
 };
 
@@ -201,6 +202,7 @@ struct ScalingOptions {
 	float cursorScaling = 1.0f;
 	CaptureMethod captureMethod = CaptureMethod::GraphicsCapture;
 	MultiMonitorUsage multiMonitorUsage = MultiMonitorUsage::Closest;
+	std::wstring preferredMonitorId;
 	DestAlignment destAlignment = DestAlignment::Center;
 	CursorInterpolationMode cursorInterpolationMode = CursorInterpolationMode::NearestNeighbor;
 	std::optional<float> autoHideCursorDelay;
