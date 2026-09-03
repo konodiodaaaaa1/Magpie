@@ -81,6 +81,7 @@ struct _AppSettingsData {
 	bool _isCheckForPreviewUpdates = false;
 	bool _isStatisticsForDynamicDetectionEnabled = false;
 	bool _isFP16Disabled = false;
+	bool _isAutoHDRBridgeEnabled = true;
 };
 
 class AppSettings : private _AppSettingsData {
@@ -218,6 +219,15 @@ public:
 
 	void IsFP16Disabled(bool value) noexcept {
 		_isFP16Disabled = value;
+		SaveAsync();
+	}
+
+	bool IsAutoHDRBridgeEnabled() const noexcept {
+		return _isAutoHDRBridgeEnabled;
+	}
+
+	void IsAutoHDRBridgeEnabled(bool value) noexcept {
+		_isAutoHDRBridgeEnabled = value;
 		SaveAsync();
 	}
 

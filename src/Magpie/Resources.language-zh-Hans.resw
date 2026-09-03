@@ -730,6 +730,12 @@
   <data name="Home_Advanced_AllowScalingMaximized.Header" xml:space="preserve">
     <value>允许缩放最大化或全屏的窗口</value>
   </data>
+  <data name="Home_Advanced_AutoHDRBridge.Header" xml:space="preserve">
+    <value>HDR 自动兼容桥接</value>
+  </data>
+  <data name="Home_Advanced_AutoHDRBridge.Description" xml:space="preserve">
+    <value>HDR 捕获时自动将效果链转换为 FP16 sRGB 范围并在输出前恢复 HDR</value>
+  </data>
   <data name="Dialog_JsonFile" xml:space="preserve">
     <value>JSON 文件</value>
   </data>

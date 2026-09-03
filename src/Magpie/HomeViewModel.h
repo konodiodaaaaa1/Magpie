@@ -111,6 +111,9 @@ struct HomeViewModel : HomeViewModelT<HomeViewModel>, wil::notify_property_chang
 	bool IsFP16Disabled() const noexcept;
 	void IsFP16Disabled(bool value);
 
+	bool IsAutoHDRBridgeEnabled() const noexcept;
+	void IsAutoHDRBridgeEnabled(bool value);
+
 	int DuplicateFrameDetectionMode() const noexcept;
 	void DuplicateFrameDetectionMode(int value);
 

@@ -52,6 +52,7 @@ void ScalingOptions::Log() const noexcept {
 	IsTouchSupportEnabled: {}
 	IsAllowScalingMaximized: {}
 	IsSimulateExclusiveFullscreen: {}
+	IsAutoHDRBridgeEnabled: {}
 	Is3DGameMode: {}
 	IsCaptureTitleBar: {}
 	IsAdjustCursorSpeed: {}
@@ -87,6 +88,7 @@ void ScalingOptions::Log() const noexcept {
 		IsTouchSupportEnabled(),
 		IsAllowScalingMaximized(),
 		IsSimulateExclusiveFullscreen(),
+		IsAutoHDRBridgeEnabled(),
 		Is3DGameMode(),
 		IsCaptureTitleBar(),
 		IsAdjustCursorSpeed(),

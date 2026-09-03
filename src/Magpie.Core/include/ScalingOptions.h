@@ -171,6 +171,7 @@ struct ScalingFlags {
 	static constexpr uint32_t BenchmarkMode = 1 << 20;
 	static constexpr uint32_t DeveloperMode = 1 << 21;
 	static constexpr uint32_t DisableTopmost = 1 << 22;
+	static constexpr uint32_t AutoHDRBridge = 1 << 23;
 };
 
 struct ScalingOptions {
@@ -189,6 +190,7 @@ struct ScalingOptions {
 	DEFINE_FLAG_ACCESSOR(IsTouchSupportEnabled, ScalingFlags::TouchSupportEnabled, flags)
 	DEFINE_FLAG_ACCESSOR(IsAllowScalingMaximized, ScalingFlags::AllowScalingMaximized, flags)
 	DEFINE_FLAG_ACCESSOR(IsSimulateExclusiveFullscreen, ScalingFlags::SimulateExclusiveFullscreen, flags)
+	DEFINE_FLAG_ACCESSOR(IsAutoHDRBridgeEnabled, ScalingFlags::AutoHDRBridge, flags)
 	DEFINE_FLAG_ACCESSOR(Is3DGameMode, ScalingFlags::Is3DGameMode, flags)
 	DEFINE_FLAG_ACCESSOR(IsCaptureTitleBar, ScalingFlags::CaptureTitleBar, flags)
 	DEFINE_FLAG_ACCESSOR(IsAdjustCursorSpeed, ScalingFlags::AdjustCursorSpeed, flags)

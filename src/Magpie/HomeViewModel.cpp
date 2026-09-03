@@ -570,6 +570,19 @@ void HomeViewModel::IsFP16Disabled(bool value) {
 	RaisePropertyChanged(L"IsFP16Disabled");
 }
 
+bool HomeViewModel::IsAutoHDRBridgeEnabled() const noexcept {
+	return AppSettings::Get().IsAutoHDRBridgeEnabled();
+}
+
+void HomeViewModel::IsAutoHDRBridgeEnabled(bool value) {
+	AppSettings& settings = AppSettings::Get();
+	if (settings.IsAutoHDRBridgeEnabled() == value) {
+		return;
+	}
+	settings.IsAutoHDRBridgeEnabled(value);
+	RaisePropertyChanged(L"IsAutoHDRBridgeEnabled");
+}
+
 int HomeViewModel::DuplicateFrameDetectionMode() const noexcept {
 	return (int)AppSettings::Get().DuplicateFrameDetectionMode();
 }
