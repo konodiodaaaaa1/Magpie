@@ -1444,13 +1444,10 @@ static bool CompositeResidual(
 	ID3D11ShaderResourceView* reducedDenoised,
 	float residualMultiplier
 ) noexcept {
-	if (impl.sourceWidth == impl.width &&
-		impl.sourceHeight == impl.height) {
-		winrt::com_ptr<ID3D11Resource> denoisedResource;
-		reducedDenoised->GetResource(denoisedResource.put());
-		impl.context11->CopyResource(output, denoisedResource.get());
-		return true;
-	}
+	// Even at 100%, input-resolution adjustment is an explicit request to use
+	// residual reconstruction.  Bypassing the compute passes at equal extents
+	// would silently ignore Residual Multiplier.  Both residual shaders have
+	// equal-extent paths, so keep one consistent composition contract here.
 	const ResampleConstants constants{
 		.sourceWidth = impl.sourceWidth,
 		.sourceHeight = impl.sourceHeight,
