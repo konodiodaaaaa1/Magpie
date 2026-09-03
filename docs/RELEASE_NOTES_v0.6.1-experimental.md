@@ -8,7 +8,7 @@
 - 重做缩放模式管理：缩放模式和效果器均可拖拽排序；新建时直接创建空白模式并自动打开重命名；新增复制、删除、重命名和重置配置。重置只恢复默认缩放模式，不会删除效果器；新的默认模式中不再自动加入 DLSS SR。
 - 参数设置面板允许使用更大的高度；配置导入、配置导出以及各项操作按钮的名称和布局更加明确。
 - 每个程序配置都可以选择具体的物理显示器作为全屏缩放目标。显示器暂时断开时会保留选择，并在启动缩放时回退到可用显示器。新安装默认允许缩放最大化或全屏窗口。
-- 修复拖拽完成时的闪退、删除新建项后再次新建不自动进入重命名等问题。多项失败提示现在会显示约 5 秒，并提供权限、窗口状态、捕获方式、裁剪、快捷键、导入导出等下一步处理建议。
+- 多项失败提示现在会显示约 5 秒，并提供权限、窗口状态、捕获方式、裁剪、快捷键、导入导出等下一步处理建议。
 
 ### 效果器更新
 
@@ -47,17 +47,17 @@ RTX 40 系用户，以及希望进一步降低深度推理开销的 RTX 50 系�
 
 这两个文件是同一个压缩包的两个分卷，必须同时下载并放在同一目录。无需手动合并；全部下载完成后，使用 7-Zip 打开或解压以 `.7z.001` 结尾的文件，两个分卷会被自动作为一个完整压缩包读取。
 
-完全退出 Magpie 后，将解压得到的全部文件和目录复制到 `Magpie.exe` 所在目录，保持目录结构并允许覆盖。不要只复制其中几个 DLL，也不要混用其他版本的 CUDA、cuDNN 或 TensorRT 文件。
+完全退出 Magpie 后，将解压得到的全部文件和目录复制到 `Magpie.exe` 所在目录，保持目录结构并**允许覆盖**。
 
 ### 可选 DLSSNR DLL：`DLSSNR-DLL-Options-310.8.0.0.zip`
 
-如果需要在 NVIDIA 官方版和 RTX 40/50 社区兼容版 `nvngx_dlssnr.dll` 之间切换，请下载此文件。完全退出 Magpie，选择其中一个版本并解压到 Magpie 根目录，替换现有的 `nvngx_dlssnr.dll`；不要同时混用两个版本。
+如果需要在 NVIDIA 官方版和 RTX 40/50 社区兼容版 `nvngx_dlssnr.dll` 之间切换，请下载此文件。退出 Magpie，选择其中一个版本并解压到 Magpie 根目录，替换现有的 `nvngx_dlssnr.dll`。
 
 如果你在其他程序或测试环境中也需要这些 DLL，也可以从该压缩包中单独解压使用；是否兼容由对应程序和使用环境决定。
 
 ### NGX OTA 开关：`NGX_OTA_Switch.bat`
 
-如果你注意到异常的内存占用或内存泄漏，这通常与 NVIDIA NGX 的 OTA 更新进程异常累积有关。可以使用这个 BAT 关闭 NGX OTA，并清理已经启动的 `nvngx_update.exe` 进程；需要时也可以随时使用它恢复 NVIDIA 默认设置。
+如果你注意到异常的内存占用或内存泄漏，这与 NVIDIA NGX 的 OTA 更新进程异常累积有关。可以使用这个 BAT 关闭 NGX OTA，并清理已经启动的 `nvngx_update.exe` 进程；需要时也可以随时使用它恢复 NVIDIA 默认设置。
 
 该工具修改系统级 NGX 设置，运行相关操作时需要管理员权限，也可能影响其他使用 NGX 的程序。
 
@@ -73,7 +73,7 @@ RTX 40 系用户，以及希望进一步降低深度推理开销的 RTX 50 系�
 - Reworked scaling-mode management. Scaling modes and effects can both be reordered by dragging. Creating a mode now produces a blank mode and immediately opens rename. Duplicate, delete, rename, and reset actions are available. Reset restores only the default scaling modes and does not delete effects; DLSS SR is no longer automatically included in the new default modes.
 - Increased the available height of the effect-parameter panel, and clarified the names and layout of configuration import, configuration export, and related actions.
 - Each application profile can select a specific physical monitor as its fullscreen scaling target. The selection is preserved while a monitor is disconnected, with fallback to an available monitor when scaling starts. New installations allow scaling maximized or fullscreen windows by default.
-- Fixed crashes when completing drag operations and automatic rename failing after deleting and recreating an item. Many failure messages now remain visible for about five seconds and provide actionable guidance for permissions, window state, capture methods, cropping, shortcuts, import, and export.
+- Many failure messages now remain visible for about five seconds and provide actionable guidance for permissions, window state, capture methods, cropping, shortcuts, import, and export.
 
 ### Effect Updates
 
@@ -112,16 +112,16 @@ RTX 40-series users, and RTX 50-series users who want to further reduce depth-in
 
 These are two volumes of the same archive. Both files must be downloaded and placed in the same directory. Do not combine them manually. After both downloads finish, open or extract the file ending in `.7z.001` with 7-Zip; the two volumes will automatically be read as one complete archive.
 
-Fully exit Magpie, then copy every extracted file and directory into the directory containing `Magpie.exe`. Preserve the directory structure and allow overwrite. Do not copy only selected DLLs, and do not mix these CUDA, cuDNN, or TensorRT files with other versions.
+Fully exit Magpie, then copy every extracted file and directory into the directory containing `Magpie.exe`. Preserve the directory structure and **allow overwrite**.
 
 ### Optional DLSSNR DLLs: `DLSSNR-DLL-Options-310.8.0.0.zip`
 
-Download this file if you need to switch between the official NVIDIA build and the community RTX 40/50-compatible build of `nvngx_dlssnr.dll`. Fully exit Magpie, select one version, and extract it into the Magpie root directory to replace the existing `nvngx_dlssnr.dll`. Do not mix both versions.
+Download this file if you need to switch between the official NVIDIA build and the community RTX 40/50-compatible build of `nvngx_dlssnr.dll`. Exit Magpie, select one version, and extract it into the Magpie root directory to replace the existing `nvngx_dlssnr.dll`.
 
 You may also extract these DLLs for another application or test environment that needs them. Compatibility depends on that application and environment.
 
 ### NGX OTA Switch: `NGX_OTA_Switch.bat`
 
-If you notice abnormal memory usage or a memory leak, it is commonly associated with accumulated NVIDIA NGX OTA update processes. This BAT can disable NGX OTA and clean up already-running `nvngx_update.exe` processes. It can also restore NVIDIA's default setting at any time.
+If you notice abnormal memory usage or a memory leak, it is associated with accumulated NVIDIA NGX OTA update processes. This BAT can disable NGX OTA and clean up already-running `nvngx_update.exe` processes. It can also restore NVIDIA's default setting at any time.
 
 The tool changes a system-wide NGX setting, requires administrator privileges for the relevant actions, and may affect other applications that use NGX.
