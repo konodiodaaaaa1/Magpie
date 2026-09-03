@@ -71,7 +71,7 @@ struct _AppSettingsData {
 	bool _isFontCacheDisabled = false;
 	bool _isSaveEffectSources = false;
 	bool _isWarningsAreErrors = false;
-	bool _isAllowScalingMaximized = false;
+	bool _isAllowScalingMaximized = true;
 	bool _isSimulateExclusiveFullscreen = false;
 	bool _isInlineParams = false;
 	bool _isShowNotifyIcon = true;
@@ -280,6 +280,8 @@ public:
 	std::vector<ScalingMode>& ScalingModes() noexcept {
 		return _scalingModes;
 	}
+
+	void ResetScalingModes() noexcept;
 
 	bool IsAutoCheckForUpdates() const noexcept {
 		return _isAutoCheckForUpdates;

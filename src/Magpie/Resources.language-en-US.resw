@@ -142,10 +142,10 @@
     <value>Press a combination of keys to change this shortcut</value>
   </data>
   <data name="ShortcutDialog_InUse" xml:space="preserve">
-    <value>Already in use</value>
+    <value>This shortcut is already used by Windows or another app. Close the conflicting app or choose another shortcut.</value>
   </data>
   <data name="ShortcutDialog_InvalidShortcut" xml:space="preserve">
-    <value>Invalid shortcut</value>
+    <value>A shortcut must start with the Windows key, Ctrl, Alt, or Shift. Enter another shortcut.</value>
   </data>
   <data name="ShortcutDialog_Save" xml:space="preserve">
     <value>Save</value>
@@ -241,13 +241,28 @@
     <value>Launch</value>
   </data>
   <data name="ScalingModes_General_Export.Text" xml:space="preserve">
-    <value>Export</value>
+    <value>Export configuration</value>
   </data>
   <data name="ScalingModes_General_Import.Text" xml:space="preserve">
-    <value>Import</value>
+    <value>Import configuration</value>
   </data>
   <data name="ScalingModes_General_MoreOptions.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
     <value>More options</value>
+  </data>
+  <data name="ScalingModes_General_Reset.Text" xml:space="preserve">
+    <value>Reset configuration</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Title" xml:space="preserve">
+    <value>Reset scaling mode configuration?</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Content" xml:space="preserve">
+    <value>This deletes all current scaling modes and restores the defaults. Custom application profiles will use the global default scaling mode. This action cannot be undone.</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Confirm" xml:space="preserve">
+    <value>Reset</value>
+  </data>
+  <data name="ScalingModes_ResetDialog_Cancel" xml:space="preserve">
+    <value>Cancel</value>
   </data>
   <data name="Settings_Launch_AlwaysRunAsAdmin.Description" xml:space="preserve">
     <value>You need to run as administrator to use this setting</value>
@@ -302,6 +317,15 @@
   </data>
   <data name="ScalingModes_Rename.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
     <value>Rename</value>
+  </data>
+  <data name="ScalingModes_Duplicate.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Duplicate</value>
+  </data>
+  <data name="ScalingModes_DuplicateSuffix" xml:space="preserve">
+    <value> - Copy</value>
+  </data>
+  <data name="ScalingModes_DragHandle.[using:Windows.UI.Xaml.Controls]ToolTipService.ToolTip" xml:space="preserve">
+    <value>Drag to reorder</value>
   </data>
   <data name="ScalingModes_RenameFlyout_OK.Content" xml:space="preserve">
     <value>OK</value>
@@ -420,6 +444,9 @@
   <data name="Profile_General_Multimonitor_Intersected.Content" xml:space="preserve">
     <value>Monitors intersected by the source window</value>
   </data>
+  <data name="Profile_General_Multimonitor_Unavailable" xml:space="preserve">
+    <value>Disconnected</value>
+  </data>
   <data name="Profile_General_ScalingMode.Header" xml:space="preserve">
     <value>Scaling mode</value>
   </data>
@@ -517,7 +544,7 @@
     <value>Magpie is up to date</value>
   </data>
   <data name="About_Version_UpdateToDate_DownloadFailed.Text" xml:space="preserve">
-    <value>Download failed</value>
+    <value>Download failed. Check your network connection and free disk space, then retry or download manually from the release page.</value>
   </data>
   <data name="About_Version_UpdateToDate_Downloading.Text" xml:space="preserve">
     <value>Downloading</value>
@@ -653,13 +680,13 @@
     <value>Unknown effect</value>
   </data>
   <data name="ScalingModes_HasUnkownEffects.Title" xml:space="preserve">
-    <value>Some effects cannot be parsed</value>
+    <value>This scaling mode contains unknown effects and cannot be used. Remove them, or restore the effect files and restart Magpie.</value>
   </data>
   <data name="Dialog_Export_Title" xml:space="preserve">
-    <value>Export scaling modes</value>
+    <value>Export configuration</value>
   </data>
   <data name="Dialog_Import_Title" xml:space="preserve">
-    <value>Import scaling modes</value>
+    <value>Import configuration</value>
   </data>
   <data name="About_Version_UpdateSettings.Header" xml:space="preserve">
     <value>Update settings</value>
@@ -764,31 +791,31 @@
     <value>If touch support fails, Magpie may request administrator privileges before scaling to perform repairs.</value>
   </data>
   <data name="Home_Advanced_SimulateExclusiveFullscreen_InfoBar.Title" xml:space="preserve">
-    <value>This option is not compatible with some older games. Please use it with caution.</value>
+    <value>This option is incompatible with some older games. Disable it if you see a black screen, focus problems, or abnormal pop-ups.</value>
   </data>
   <data name="Message_InvalidScalingMode" xml:space="preserve">
-    <value>Scaling mode is invalid.</value>
+    <value>The current profile has no usable scaling mode. Select another mode, or add and repair the effects in this mode.</value>
   </data>
   <data name="Message_TouchSupport" xml:space="preserve">
-    <value>Failed to enable touch support.</value>
+    <value>The touch support component could not start. Disable touch support and retry, or run Magpie as administrator and enable it again.</value>
   </data>
   <data name="Message_InvalidSourceWindow" xml:space="preserve">
-    <value>Scaling of this window is not supported.</value>
+    <value>This window cannot be scaled. Make sure it is still running, responsive, on a display, and at least 64×64 pixels.</value>
   </data>
   <data name="Message_Maximized" xml:space="preserve">
-    <value>Scaling of maximized or fullscreen windows is disabled. You can change this setting on the Home page.</value>
+    <value>Scaling maximized or fullscreen windows is disabled. Restore the window, or enable “Allow scaling of maximized or fullscreen windows” under Home → Advanced.</value>
   </data>
   <data name="Message_LowIntegrityLevel" xml:space="preserve">
-    <value>Magpie needs to be run as an administrator to scale this window.</value>
+    <value>The target window has higher privileges than Magpie. Close Magpie and run it as administrator, then try again.</value>
   </data>
   <data name="Message_ScalingFailedGeneral" xml:space="preserve">
-    <value>Please refer to the logs for more details.</value>
+    <value>Scaling could not be initialized. Stop scaling, reopen the target window, and retry. If it still fails, restart Magpie.</value>
   </data>
   <data name="Message_CaptureFailed" xml:space="preserve">
-    <value>An error occurred while capturing this window. Please try using a different capture method.</value>
+    <value>This window could not be captured. Make sure it is not minimized, then select Default or Graphics Capture in the current profile and retry.</value>
   </data>
   <data name="Message_CreateFenceFailed" xml:space="preserve">
-    <value>The current graphics card does not support ID3D11Device5::CreateFence. Please try switching the graphics card or updating the drivers.</value>
+    <value>The selected graphics card or driver lacks a synchronization feature required for scaling. Select another GPU under Performance, or update the graphics driver.</value>
   </data>
   <data name="Message_NvidiaVsrPathUnsupported" xml:space="preserve">
     <value>NVIDIA VSR initialization failed (error -2). Fully extract Magpie to a path containing only English letters and numbers. No parent directory may contain Chinese characters or special characters, then run Magpie again.</value>
@@ -797,7 +824,7 @@
     <value>Scaling failed</value>
   </data>
   <data name="Profile_Performance_NoGraphicsCard.Title" xml:space="preserve">
-    <value>No compatible graphics card was found, so CPU rendering will be used instead. Performance may not meet expectations.</value>
+    <value>No compatible graphics card was found, so slower CPU rendering will be used. Make sure your graphics driver is installed and up to date.</value>
   </data>
   <data name="Home_Advanced_MinFrameRate.Header" xml:space="preserve">
     <value>Minimum frame rate</value>
@@ -839,10 +866,10 @@
     <value>Undo</value>
   </data>
   <data name="Message_BannedInWindowedMode" xml:space="preserve">
-    <value>Windowed scaling of this window is not supported.</value>
+    <value>This window is maximized or fullscreen. Restore it or exit fullscreen, or use fullscreen scaling instead.</value>
   </data>
   <data name="Message_InvalidCropping" xml:space="preserve">
-    <value>Failed to apply custom cropping.</value>
+    <value>The cropped area is too small or invalid. Reduce the crop values so both dimensions are at least 64 pixels, or disable custom cropping.</value>
   </data>
   <data name="Home_TouchSupport.Description" xml:space="preserve">
     <value>Due to system security restrictions, Magpie requires UIAccess privilege to support touch input.</value>
@@ -890,7 +917,7 @@
     <value>Toolbar state toggle shortcut</value>
   </data>
   <data name="Message_ToolbarIn3DGameMode" xml:space="preserve">
-    <value>The toolbar is not supported in 3D game mode.</value>
+    <value>The toolbar is unavailable in 3D game mode. Stop scaling and disable 3D game mode, or use scaling shortcuts.</value>
   </data>
   <data name="Message_ToolbarNewState" xml:space="preserve">
     <value>Toolbar: {}</value>
@@ -911,7 +938,7 @@
     <value>Profiler Window</value>
   </data>
   <data name="Message_Windowed3DGameMode" xml:space="preserve">
-    <value>Windowed scaling is not supported in 3D game mode.</value>
+    <value>Windowed scaling is unavailable while 3D game mode is enabled. Disable 3D game mode, or use fullscreen scaling.</value>
   </data>
   <data name="Profile_General_3DGameMode.Description" xml:space="preserve">
     <value>Enables optimizations for 3D games, but is incompatible with the toolbar and windowed scaling</value>
@@ -929,7 +956,7 @@
     <value>Screenshot saved as {}</value>
   </data>
   <data name="Message_ScreenshotFailed" xml:space="preserve">
-    <value>Screenshot failed.</value>
+    <value>The screenshot could not be saved. Check that the screenshot folder exists and is writable, or choose another folder on the Home page.</value>
   </data>
   <data name="Overlay_Toolbar_TakeScreenshot_Description" xml:space="preserve">
     <value>Right-click to export intermediate result</value>
@@ -965,7 +992,7 @@
     <value>Applies to fullscreen scaling only</value>
   </data>
   <data name="Home_TouchSupport_Warn.Title" xml:space="preserve">
-    <value>Toolbar is not compatible with touch input.</value>
+    <value>The toolbar does not support touch input. Use a mouse or keyboard shortcuts instead.</value>
   </data>
   <data name="Overlay_Toolbar_Close_Description" xml:space="preserve">
     <value>Right-click to close toolbar</value>
@@ -983,19 +1010,19 @@
     <value>Windowed scaling</value>
   </data>
   <data name="Message_ExportScalingModesFailed" xml:space="preserve">
-    <value>Failed to export scaling modes.</value>
+    <value>Scaling modes could not be exported. Choose a writable location and check that the file is not in use and sufficient disk space is available.</value>
   </data>
   <data name="Message_ImportScalingModesFailed" xml:space="preserve">
-    <value>Failed to import scaling modes.</value>
+    <value>Scaling modes could not be imported. Select a readable scaling-mode JSON file and make sure its contents are not corrupted.</value>
   </data>
   <data name="Home_Advanced_DeveloperOptions_LocateLogs.Header" xml:space="preserve">
     <value>Open logs location</value>
   </data>
   <data name="Message_WindowedDesktopDuplication" xml:space="preserve">
-    <value>Windowed scaling is not supported with Desktop Duplication capture.</value>
+    <value>Desktop Duplication does not support windowed scaling. Select Default or Graphics Capture, or use fullscreen scaling.</value>
   </data>
   <data name="Profile_General_DesktopDuplicationWarning.Title" xml:space="preserve">
-    <value>This capture method is incompatible with windowed scaling.</value>
+    <value>Desktop Duplication does not support windowed scaling. Select Default or Graphics Capture, or use fullscreen scaling.</value>
   </data>
   <data name="Settings_Launch_RunAtStartup.Description" xml:space="preserve">
     <value>The main window will not appear if "Display the app on the system tray" is enabled</value>

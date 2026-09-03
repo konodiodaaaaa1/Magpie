@@ -88,6 +88,9 @@ EffectParametersViewModel::EffectParametersViewModel(uint32_t scalingModeIdx, ui
 			);
 			paramItem->PropertyChanged({
 				this, &EffectParametersViewModel::_ScalingModeParameter_PropertyChanged });
+			if (isDlssnr && param.name == "residualMultiplier") {
+				_residualMultiplier = paramItem;
+			}
 			parameterItems.push_back(*paramItem);
 		} else {
 			const EffectConstant<int>& constant = std::get<1>(param.constant);
@@ -123,6 +126,10 @@ EffectParametersViewModel::EffectParametersViewModel(uint32_t scalingModeIdx, ui
 	}
 	if (_inputResolutionPercent) {
 		_inputResolutionPercent->IsVisible(
+			inputResolutionToggle && inputResolutionToggle->BooleanValue());
+	}
+	if (_residualMultiplier) {
+		_residualMultiplier->IsVisible(
 			inputResolutionToggle && inputResolutionToggle->BooleanValue());
 	}
 	if (!isDlssnr) {
@@ -163,6 +170,9 @@ void EffectParametersViewModel::_ScalingModeParameter_PropertyChanged(
 	if (effectName == "enableInputResolutionScaling" &&
 		_inputResolutionPercent) {
 		_inputResolutionPercent->IsVisible(paramImpl->BooleanValue());
+		if (_residualMultiplier) {
+			_residualMultiplier->IsVisible(paramImpl->BooleanValue());
+		}
 	}
 
 	LazySaveAppSettings();

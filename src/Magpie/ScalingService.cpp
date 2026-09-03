@@ -201,7 +201,8 @@ static void ShowError(HWND hWnd, ScalingError error) noexcept {
 	ResourceLoader resourceLoader =
 		ResourceLoader::GetForViewIndependentUse(CommonSharedConstants::APP_RESOURCE_MAP_ID);
 	hstring title = isFail ? resourceLoader.GetString(L"Message_ScalingFailed") : hstring{};
-	ToastService::Get().ShowMessageOnWindow(title, resourceLoader.GetString(key), hWnd);
+	ToastService::Get().ShowMessageOnWindow(
+		title, resourceLoader.GetString(key), hWnd, std::chrono::seconds(5));
 	Logger::Get().Error(fmt::format("缩放失败\n\t错误码: {}", (int)error));
 }
 
@@ -376,6 +377,7 @@ ScalingError ScalingService::_StartScaleImpl(HWND hWnd, const Profile& profile, 
 		options.maxFrameRate = profile.maxFrameRate;
 	}
 	options.multiMonitorUsage = profile.multiMonitorUsage;
+	options.preferredMonitorId = profile.preferredMonitorId;
 	options.destAlignment = profile.destAlignment;
 	options.cursorInterpolationMode = profile.cursorInterpolationMode;
 	options.flags = profile.scalingFlags;

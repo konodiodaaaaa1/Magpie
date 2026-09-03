@@ -9,6 +9,7 @@ class NgxD3D12Core;
 struct DLSSNRSettings {
 	bool enableInputResolutionScaling = false;
 	uint32_t inputResolutionPercent = 100;
+	float residualMultiplier = 1.0f;
 	int preset = 0;
 	int style = 0;
 	float intensity = 1.0f;

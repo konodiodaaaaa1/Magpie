@@ -275,6 +275,20 @@ void Renderer::OnCursorVisibilityChanged(bool isVisible, bool onDestory) {
 	_backendThreadDispatcher.TryEnqueue([this, isVisible, onDestory]() {
 		if (_frameSource) {
 			_frameSource->OnCursorVisibilityChanged(isVisible, onDestory);
+			if (isVisible && !onDestory &&
+				_frameGuidanceService.IsInitialized()) {
+				_frameGuidanceService.ResetHistory(
+					FrameGuidanceResetReason::CaptureInterrupted);
+			}
+		}
+	});
+}
+
+void Renderer::OnSourceFocusChanged() noexcept {
+	_backendThreadDispatcher.TryEnqueue([this]() {
+		if (_frameGuidanceService.IsInitialized()) {
+			_frameGuidanceService.ResetHistory(
+				FrameGuidanceResetReason::CaptureInterrupted);
 		}
 	});
 }
@@ -1028,11 +1042,22 @@ ID3D11Texture2D* Renderer::_ResizeEffects() noexcept {
 	const FrameGuidanceRequirements guidanceRequirements =
 		CollectFrameGuidanceRequirements(
 			_nativeEffectBackends, _dlssFrameGenerator.get());
-	if (_frameGuidanceService.IsInitialized() && !_frameGuidanceService.Resize(
-		{ sourceDesc.Width, sourceDesc.Height }, _capturedFrameId,
-		guidanceRequirements)) {
-		Logger::Get().Error("Resize Frame Guidance service failed");
-		return nullptr;
+	if (_frameGuidanceService.IsInitialized()) {
+		const FrameGuidanceExtent sourceExtent{
+			sourceDesc.Width, sourceDesc.Height
+		};
+		if (!_frameGuidanceService.Resize(sourceExtent, guidanceRequirements)) {
+			Logger::Get().Error("Resize Frame Guidance service failed");
+			return nullptr;
+		}
+		// Resize only reallocates provider resources. Re-seed them from the
+		// last real capture instead of manufacturing a color-less pseudo-frame.
+		if (_capturedFrameId != 0 && !_frameGuidanceService.BeginFrame(
+			_capturedFrameId, inOutTexture, guidanceRequirements
+		).IsValidFor(_capturedFrameId, sourceExtent)) {
+			Logger::Get().Error("Produce Frame Guidance after resize failed");
+			return nullptr;
+		}
 	}
 	for (uint32_t i = 0; i < effectCount; ++i) {
 		if (!_effectDrawers[i].ResizeTextures(
@@ -1400,6 +1425,10 @@ void Renderer::_BackendThreadProc() noexcept {
 			}
 
 			// 强制帧
+			if (_capturedFrameId == 0) {
+				// The output texture has no defined contents before first capture.
+				break;
+			}
 			[[fallthrough]];
 		case FrameSourceState::NewFrame:
 			_BackendRender(
@@ -1587,6 +1616,13 @@ void Renderer::_BackendRender(
 ) noexcept {
 	_stepTimer.PrepareForRender();
 	if (isNewCaptureFrame) {
+		const auto captureTime = std::chrono::steady_clock::now();
+		if (_lastCapturedFrameTime != std::chrono::steady_clock::time_point{} &&
+			captureTime - _lastCapturedFrameTime >= std::chrono::milliseconds(500) &&
+			_frameGuidanceService.IsInitialized()) {
+			_frameGuidanceService.ResetHistory(FrameGuidanceResetReason::LongPause);
+		}
+		_lastCapturedFrameTime = captureTime;
 		++_capturedFrameId;
 		const FrameGuidanceRequirements guidanceRequirements =
 			CollectFrameGuidanceRequirements(

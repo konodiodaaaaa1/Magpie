@@ -12,7 +12,6 @@
 #include "CommonSharedConstants.h"
 #include "App.h"
 #include "ScalingModeEffectItem.h"
-#include "Win32Helper.h"
 #include "RootPage.h"
 
 using namespace ::Magpie;
@@ -23,8 +22,13 @@ static ScalingModeEffectItem& GetEffectItemImpl(const IInspectable& item) noexce
 	return *get_self<ScalingModeEffectItem>(item.try_as<winrt::Magpie::ScalingModeEffectItem>());
 }
 
-ScalingModeItem::ScalingModeItem(uint32_t index, bool isInitialExpanded)
-	: _index(index), _isInitialExpanded(isInitialExpanded)
+ScalingModeItem::ScalingModeItem(
+	uint32_t index,
+	bool isInitialExpanded,
+	bool shouldAutoRename)
+	: _index(index),
+	  _isInitialExpanded(isInitialExpanded),
+	  _shouldAutoRename(shouldAutoRename)
 {
 	{
 		std::vector<IInspectable> linkedProfiles;
@@ -67,11 +71,6 @@ void ScalingModeItem::_Index(uint32_t value) noexcept {
 	for (const IInspectable& item : _effects) {
 		GetEffectItemImpl(item).ScalingModeIdx(value);
 	}
-
-	if (!_IsRemoved()) {
-		RaisePropertyChanged(L"CanMoveUp");
-		RaisePropertyChanged(L"CanMoveDown");
-	}
 }
 
 // 效果被删除后 ScalingModeItem 不会立刻析构，而且 WinUI 可能会更新绑定！我们要
@@ -82,34 +81,30 @@ bool ScalingModeItem::_IsRemoved() const noexcept {
 }
 
 void ScalingModeItem::_ScalingModesService_Added(EffectAddedWay) {
-	if (_index + 2 == ScalingModesService::Get().GetScalingModeCount()) {
-		RaisePropertyChanged(L"CanMoveDown");
-	}
+	RaisePropertyChanged(L"CanDrag");
 }
 
-void ScalingModeItem::_ScalingModesService_Moved(uint32_t index, bool isMoveUp) {
-	uint32_t targetIndex = isMoveUp ? index - 1 : index + 1;
-	if (_index == index) {
-		_Index(targetIndex);
-	} else if (_index == targetIndex) {
-		_Index(index);
+void ScalingModeItem::_ScalingModesService_Moved(uint32_t fromIndex, uint32_t toIndex) {
+	if (_index == fromIndex) {
+		_Index(toIndex);
+	} else if (fromIndex < toIndex && _index > fromIndex && _index <= toIndex) {
+		_Index(_index - 1);
+	} else if (toIndex < fromIndex && _index >= toIndex && _index < fromIndex) {
+		_Index(_index + 1);
 	}
 }
 
 void ScalingModeItem::_ScalingModesService_Removed(uint32_t index) {
 	if (_index > index) {
 		_Index(_index - 1);
-	} else {
-		RaisePropertyChanged(L"CanMoveUp");
-		RaisePropertyChanged(L"CanMoveDown");
 	}
+	RaisePropertyChanged(L"CanDrag");
 }
 
 void ScalingModeItem::_Effects_VectorChanged(IObservableVector<IInspectable> const&, IVectorChangedEventArgs const& args) {
 	if (!_isMovingEffects) {
 		RaisePropertyChanged(L"Description");
 		RaisePropertyChanged(L"CanReorderEffects");
-		RaisePropertyChanged(L"IsShowMoveButtons");
 		return;
 	}
 	
@@ -118,22 +113,32 @@ void ScalingModeItem::_Effects_VectorChanged(IObservableVector<IInspectable> con
 		_movingFromIdx = args.Index();
 		return;
 	}
-	
-	assert(args.CollectionChange() == CollectionChange::ItemInserted);
-	uint32_t movingToIdx = args.Index();
+	if (args.CollectionChange() != CollectionChange::ItemInserted ||
+		_movingFromIdx == std::numeric_limits<uint32_t>::max()) {
+		return;
+	}
+
+	const uint32_t movingFromIdx = std::exchange(
+		_movingFromIdx,
+		std::numeric_limits<uint32_t>::max());
+	const uint32_t movingToIdx = args.Index();
 
 	std::vector<EffectItem>& effects = _Data().effects;
-	EffectItem removedEffect = std::move(effects[_movingFromIdx]);
-	effects.erase(effects.begin() + _movingFromIdx);
+	if (movingFromIdx >= effects.size() || movingToIdx >= effects.size()) {
+		return;
+	}
+
+	EffectItem removedEffect = std::move(effects[movingFromIdx]);
+	effects.erase(effects.begin() + movingFromIdx);
 	effects.emplace(effects.begin() + movingToIdx, std::move(removedEffect));
 
 	uint32_t minIdx, maxIdx;
-	if (_movingFromIdx < movingToIdx) {
-		minIdx = _movingFromIdx;
+	if (movingFromIdx < movingToIdx) {
+		minIdx = movingFromIdx;
 		maxIdx = movingToIdx;
 	} else {
 		minIdx = movingToIdx;
-		maxIdx = _movingFromIdx;
+		maxIdx = movingFromIdx;
 	}
 	
 	for (uint32_t i = minIdx; i <= maxIdx; ++i) {
@@ -162,49 +167,23 @@ void ScalingModeItem::_ScalingModeEffectItem_Removed(uint32_t index) {
 		GetEffectItemImpl(_effects.GetAt(i)).EffectIdx(i);
 	}
 
-	if (index > 0) {
-		GetEffectItemImpl(_effects.GetAt(index - 1)).RefreshMoveState();
-	}
-	if (index < _effects.Size()) {
-		GetEffectItemImpl(_effects.GetAt(index)).RefreshMoveState();
-	}
+	_RefreshEffectDragState();
 
 	RaisePropertyChanged(L"HasUnkownEffects");
 
 	AppSettings::Get().SaveAsync();
 }
 
-void ScalingModeItem::_ScalingModeEffectItem_Moved(ScalingModeEffectItem& sender, bool isUp) {
-	if (_IsRemoved()) {
-		return;
-	}
-
-	uint32_t idx = sender.EffectIdx();
-
-	if (isUp) {
-		assert(idx > 0);
-		IInspectable prev = _effects.GetAt(idx - 1);
-		// 状态更新由 _Effects_VectorChanged 处理
-		_effects.RemoveAt(idx - 1);
-		_effects.InsertAt(idx, prev);
-
-		GetEffectItemImpl(prev).RefreshMoveState();
-	} else {
-		assert(idx + 1 < _effects.Size());
-		IInspectable next = _effects.GetAt(idx + 1);
-		_effects.RemoveAt(idx + 1);
-		_effects.InsertAt(idx, next);
-
-		GetEffectItemImpl(next).RefreshMoveState();
-	}
-	sender.RefreshMoveState();
-}
-
 com_ptr<ScalingModeEffectItem> ScalingModeItem::_CreateScalingModeEffectItem(uint32_t scalingModeIdx, uint32_t effectIdx) {
 	auto item = make_self<ScalingModeEffectItem>(scalingModeIdx, effectIdx);
 	item->Removed(std::bind_front(&ScalingModeItem::_ScalingModeEffectItem_Removed, this));
-	item->Moved(std::bind_front(&ScalingModeItem::_ScalingModeEffectItem_Moved, this));
 	return item;
+}
+
+void ScalingModeItem::_RefreshEffectDragState() {
+	for (const IInspectable& item : _effects) {
+		GetEffectItemImpl(item).RefreshDragState();
+	}
 }
 
 void ScalingModeItem::AddEffect(const hstring& fullName) {
@@ -227,11 +206,7 @@ void ScalingModeItem::AddEffect(const hstring& fullName) {
 	_effects.Append(*item);
 	_isMovingEffects = true;
 
-	uint32_t size = _effects.Size();
-	GetEffectItemImpl(_effects.GetAt(size - 1)).RefreshMoveState();
-	if (size > 1) {
-		GetEffectItemImpl(_effects.GetAt(size - 2)).RefreshMoveState();
-	}
+	_RefreshEffectDragState();
 
 	AppSettings::Get().SaveAsync();
 }
@@ -341,36 +316,25 @@ void ScalingModeItem::RenameButton_Click() {
 	AppSettings::Get().SaveAsync();
 }
 
-bool ScalingModeItem::CanMoveUp() const noexcept {
-	if (_IsRemoved()) {
-		return false;
-	}
-
-	return _index != 0;
+bool ScalingModeItem::TakeAutoRenameRequest() noexcept {
+	return std::exchange(_shouldAutoRename, false);
 }
 
-bool ScalingModeItem::CanMoveDown() const noexcept {
-	if (_IsRemoved()) {
-		return false;
-	}
-
-	return _index + 1 < ScalingModesService::Get().GetScalingModeCount();
+bool ScalingModeItem::CanDrag() const noexcept {
+	return !_IsRemoved() &&
+		ScalingModesService::Get().GetScalingModeCount() > 1;
 }
 
-void ScalingModeItem::MoveUp() noexcept {
+void ScalingModeItem::Duplicate() {
 	if (_IsRemoved()) {
 		return;
 	}
 
-	ScalingModesService::Get().MoveScalingMode(_index, true);
-}
-
-void ScalingModeItem::MoveDown() noexcept {
-	if (_IsRemoved()) {
-		return;
-	}
-
-	ScalingModesService::Get().MoveScalingMode(_index, false);
+	ResourceLoader resourceLoader =
+		ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
+	std::wstring name = _Data().name;
+	name += resourceLoader.GetString(L"ScalingModes_DuplicateSuffix");
+	ScalingModesService::Get().AddScalingMode(name, (int)_index);
 }
 
 bool ScalingModeItem::CanReorderEffects() const noexcept {
@@ -378,16 +342,7 @@ bool ScalingModeItem::CanReorderEffects() const noexcept {
 		return false;
 	}
 
-	// 管理员身份下不支持拖拽排序
-	return _effects.Size() > 1 && !Win32Helper::IsProcessElevated();
-}
-
-bool ScalingModeItem::IsShowMoveButtons() const noexcept {
-	if (_IsRemoved()) {
-		return false;
-	}
-
-	return _effects.Size() > 1 && Win32Helper::IsProcessElevated();
+	return _effects.Size() > 1;
 }
 
 void ScalingModeItem::Remove() {

@@ -96,6 +96,8 @@ struct Profile {
 		graphicsCardId = other.graphicsCardId;
 		maxFrameRate = other.maxFrameRate;
 		multiMonitorUsage = other.multiMonitorUsage;
+		preferredMonitorId = other.preferredMonitorId;
+		preferredMonitorName = other.preferredMonitorName;
 		cursorInterpolationMode = other.cursorInterpolationMode;
 		launchParameters = other.launchParameters;
 		destAlignment = other.destAlignment;
@@ -138,6 +140,8 @@ struct Profile {
 	CaptureMethod captureMethod = CaptureMethod::GraphicsCapture;
 	GraphicsCardId graphicsCardId;
 	MultiMonitorUsage multiMonitorUsage = MultiMonitorUsage::Closest;
+	std::wstring preferredMonitorId;
+	std::wstring preferredMonitorName;
 	CursorInterpolationMode cursorInterpolationMode = CursorInterpolationMode::NearestNeighbor;
 
 	// 10~1000

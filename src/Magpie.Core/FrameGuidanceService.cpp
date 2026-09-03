@@ -435,6 +435,7 @@ bool FrameGuidanceService::Initialize(
 	ID3D11Texture2D* sourceFrame,
 	const FrameGuidanceRequirements& requirements
 ) noexcept {
+	static_cast<void>(requirements);
 	_resources = &resources;
 	_sourceExtent = GetTextureExtent(sourceFrame);
 	if (!_sourceExtent.IsValid() ||
@@ -459,13 +460,13 @@ bool FrameGuidanceService::Initialize(
 		_zeroMotionProvider.Reset(FrameGuidanceResetReason::ProviderFailure);
 	}
 
+	// The frame-source output is only an allocation at this point; capture has
+	// not started yet, so its contents are undefined. Keep every provider in its
+	// Initialize reset state and let the first real capture frame seed history.
 	_hasCachedFrame = false;
-	return _Produce({
-		.color = sourceFrame,
-		.frameId = 0,
-		.sourceExtent = _sourceExtent,
-		.validRegion = FrameGuidanceRegion::Full(_sourceExtent)
-	}, requirements).IsValidFor(0, _sourceExtent);
+	_view = {};
+	_zeroView = {};
+	return true;
 }
 
 const FrameGuidanceView& FrameGuidanceService::BeginFrame(
@@ -479,7 +480,7 @@ const FrameGuidanceView& FrameGuidanceService::BeginFrame(
 		return _view;
 	}
 	if (extent != _sourceExtent) {
-		if (!Resize(extent, frameId, requirements)) {
+		if (!Resize(extent, requirements)) {
 			return _view;
 		}
 	}
@@ -493,7 +494,6 @@ const FrameGuidanceView& FrameGuidanceService::BeginFrame(
 
 bool FrameGuidanceService::Resize(
 	FrameGuidanceExtent sourceExtent,
-	FrameGuidanceFrameId currentFrameId,
 	const FrameGuidanceRequirements& requirements
 ) noexcept {
 	if (!sourceExtent.IsValid() || !_resources) {
@@ -521,11 +521,9 @@ bool FrameGuidanceService::Resize(
 	_sourceExtent = sourceExtent;
 	if (_adapterCache) _adapterCache->Reset();
 	_hasCachedFrame = false;
-	return _Produce({
-		.frameId = currentFrameId,
-		.sourceExtent = sourceExtent,
-		.validRegion = FrameGuidanceRegion::Full(sourceExtent)
-	}, requirements).IsValidFor(currentFrameId, sourceExtent);
+	_view = {};
+	_zeroView = {};
+	return true;
 }
 
 FrameGuidanceConsumerViews FrameGuidanceService::GetConsumerViews(

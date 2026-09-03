@@ -15,11 +15,11 @@ namespace Magpie {
 		String RenameText;
 		Boolean IsRenameConfirmButtonEnabled { get; };
 		void Rename();
-
-		Boolean CanMoveUp { get; };
-		Boolean CanMoveDown { get; };
-		void MoveUp();
-		void MoveDown();
+		void RenameFlyout_Opening();
+		void RenameTextBox_KeyDown(Object sender, Windows.UI.Xaml.Input.KeyRoutedEventArgs args);
+		Int32 RenameTextBoxSelectionStart { get; };
+		void RenameButton_Click();
+		Boolean CanDrag { get; };
 
 		void Delete();
 		
@@ -34,7 +34,8 @@ namespace Magpie {
 		Boolean Is3DGameMode;
 
 		Boolean HasMultipleMonitors { get; };
-		Int32 MultiMonitorUsage;
+		IVector<IInspectable> MonitorOptions { get; };
+		Int32 MonitorSelection;
 
 		Int32 InitialWindowedScaleFactor;
 		Double CustomInitialWindowedScaleFactor;

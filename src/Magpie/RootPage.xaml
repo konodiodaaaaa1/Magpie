@@ -7,6 +7,184 @@
       xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
       Loaded="RootPage_Loaded"
       mc:Ignorable="d">
+	<Page.Resources>
+		<DataTemplate x:Key="ProfileNavigationItemContentTemplate"
+		              x:DataType="local:ProfileViewModel">
+			<Grid Height="36"
+			      MinWidth="0"
+			      Margin="0,0,-16,0"
+			      HorizontalAlignment="Stretch"
+			      VerticalAlignment="Center">
+				<Grid.Resources>
+					<ResourceDictionary>
+						<ResourceDictionary.ThemeDictionaries>
+							<ResourceDictionary x:Key="Default">
+								<StaticResource x:Key="ButtonBackground"
+								                ResourceKey="SubtleFillColorTransparentBrush" />
+								<StaticResource x:Key="ButtonBackgroundPointerOver"
+								                ResourceKey="SubtleFillColorSecondaryBrush" />
+								<StaticResource x:Key="ButtonBackgroundPressed"
+								                ResourceKey="SubtleFillColorTertiaryBrush" />
+							</ResourceDictionary>
+							<ResourceDictionary x:Key="Light">
+								<StaticResource x:Key="ButtonBackground"
+								                ResourceKey="SubtleFillColorTransparentBrush" />
+								<StaticResource x:Key="ButtonBackgroundPointerOver"
+								                ResourceKey="SubtleFillColorSecondaryBrush" />
+								<StaticResource x:Key="ButtonBackgroundPressed"
+								                ResourceKey="SubtleFillColorTertiaryBrush" />
+							</ResourceDictionary>
+						</ResourceDictionary.ThemeDictionaries>
+						<Style x:Key="ProfileActionButtonStyle"
+						       BasedOn="{StaticResource DefaultButtonStyle}"
+						       TargetType="Button">
+							<Setter Property="Width" Value="28" />
+							<Setter Property="Height" Value="28" />
+							<Setter Property="MinWidth" Value="28" />
+							<Setter Property="MinHeight" Value="28" />
+							<Setter Property="Padding" Value="4" />
+							<Setter Property="BorderThickness" Value="0" />
+						</Style>
+					</ResourceDictionary>
+				</Grid.Resources>
+				<Grid.ColumnDefinitions>
+					<ColumnDefinition Width="*" />
+					<ColumnDefinition Width="Auto" />
+					<ColumnDefinition Width="Auto" />
+					<ColumnDefinition Width="Auto" />
+				</Grid.ColumnDefinitions>
+				<TextBlock Grid.Column="0"
+				           MinWidth="0"
+				           Margin="0,0,2,0"
+				           VerticalAlignment="Center"
+				           local:TextBlockHelper.IsAutoTooltipEnabled="True"
+				           Text="{x:Bind Name, Mode=OneWay}"
+				           TextTrimming="CharacterEllipsis" />
+				<Button x:Uid="Profile_Launch"
+				        Grid.Column="1"
+				        Click="{x:Bind Launch}"
+				        IsEnabled="{x:Bind IsProgramExist, Mode=OneTime}"
+				        Style="{StaticResource ProfileActionButtonStyle}">
+					<Button.Content>
+						<FontIcon FontSize="13" Glyph="&#xE768;" />
+					</Button.Content>
+				</Button>
+				<Button x:Uid="Profile_MoreOptions"
+				        Grid.Column="2"
+				        Margin="4,0,0,0"
+				        Click="ProfileMoreOptionsButton_Click"
+				        Style="{StaticResource ProfileActionButtonStyle}">
+					<Button.Content>
+						<FontIcon FontSize="17" Glyph="&#xE712;" />
+					</Button.Content>
+					<Button.Flyout>
+						<MenuFlyout Placement="Bottom"
+						            ShouldConstrainToRootBounds="False">
+							<MenuFlyoutItem x:Uid="Profile_MoreOptions_OpenProgramLocation"
+							                Click="{x:Bind OpenProgramLocation}"
+							                IsEnabled="{x:Bind IsProgramExist, Mode=OneTime}">
+								<MenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE8DA;" />
+								</MenuFlyoutItem.Icon>
+							</MenuFlyoutItem>
+							<MenuFlyoutItem x:Uid="Profile_MoreOptions_ChangeExecutableForLaunching"
+							                Click="{x:Bind ChangeExeForLaunching}"
+							                IsEnabled="{x:Bind IsProgramExist, Mode=OneTime}"
+							                Visibility="{x:Bind IsNotPackaged, Mode=OneTime}">
+								<MenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE8E5;" />
+								</MenuFlyoutItem.Icon>
+							</MenuFlyoutItem>
+							<MenuFlyoutSeparator />
+							<MenuFlyoutItem x:Uid="Profile_MoreOptions_Rename"
+							                Click="ProfileRenameMenuItem_Click">
+								<MenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE8AC;" />
+								</MenuFlyoutItem.Icon>
+								<FlyoutBase.AttachedFlyout>
+									<Flyout Opening="{x:Bind RenameFlyout_Opening}"
+									        Placement="Bottom">
+										<local:SimpleStackPanel>
+											<TextBlock x:Uid="Profile_MoreOptions_RenameFlyout_Title" />
+											<TextBox Width="280"
+											         Height="32"
+											         Margin="0,8,0,20"
+											         KeyDown="{x:Bind RenameTextBox_KeyDown}"
+											         Loaded="ProfileRenameTextBox_Loaded"
+											         SelectionStart="{x:Bind RenameTextBoxSelectionStart, Mode=OneWay}"
+											         Text="{x:Bind RenameText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+												<TextBox.ContextFlyout>
+													<local:TextMenuFlyout />
+												</TextBox.ContextFlyout>
+											</TextBox>
+											<Button x:Uid="Profile_MoreOptions_RenameFlyout_OK"
+											        MinWidth="80"
+											        HorizontalAlignment="Right"
+											        Click="{x:Bind RenameButton_Click}"
+											        IsEnabled="{x:Bind IsRenameConfirmButtonEnabled, Mode=OneWay}"
+											        Style="{StaticResource AccentButtonStyle}" />
+										</local:SimpleStackPanel>
+									</Flyout>
+								</FlyoutBase.AttachedFlyout>
+							</MenuFlyoutItem>
+							<MenuFlyoutItem x:Uid="Profile_MoreOptions_Delete"
+							                Click="ProfileDeleteMenuItem_Click">
+								<MenuFlyoutItem.Icon>
+									<FontIcon Glyph="&#xE74D;" />
+								</MenuFlyoutItem.Icon>
+								<FlyoutBase.AttachedFlyout>
+									<Flyout Placement="Bottom">
+										<local:SimpleStackPanel Spacing="12">
+											<TextBlock x:Uid="Profile_MoreOptions_DeleteFlyout_Title" />
+											<Button HorizontalAlignment="Right"
+											        Click="{x:Bind Delete}">
+												<Button.Resources>
+													<ResourceDictionary>
+														<StaticResource x:Key="ButtonBackground" ResourceKey="DeleteButtonBackgroundBrush" />
+														<StaticResource x:Key="ButtonBackgroundPointerOver" ResourceKey="DeleteButtonBackgroundPointerOverBrush" />
+														<StaticResource x:Key="ButtonBackgroundPressed" ResourceKey="DeleteButtonBackgroundPressedBrush" />
+														<StaticResource x:Key="ButtonForeground" ResourceKey="DeleteButtonForegroundBrush" />
+														<StaticResource x:Key="ButtonForegroundPointerOver" ResourceKey="DeleteButtonForegroundBrush" />
+														<StaticResource x:Key="ButtonForegroundPressed" ResourceKey="DeleteButtonForegroundPressedBrush" />
+													</ResourceDictionary>
+												</Button.Resources>
+												<Button.Content>
+													<local:SimpleStackPanel Orientation="Horizontal" Spacing="8">
+														<FontIcon VerticalAlignment="Center"
+														          FontSize="{StaticResource StandardIconSize}"
+														          Glyph="&#xE74D;" />
+														<TextBlock x:Uid="Profile_MoreOptions_DeleteFlyout_Delete"
+														           VerticalAlignment="Center" />
+													</local:SimpleStackPanel>
+												</Button.Content>
+											</Button>
+										</local:SimpleStackPanel>
+									</Flyout>
+								</FlyoutBase.AttachedFlyout>
+							</MenuFlyoutItem>
+						</MenuFlyout>
+					</Button.Flyout>
+				</Button>
+				<Grid x:Uid="ScalingModes_DragHandle"
+				      Grid.Column="3"
+				      Width="24"
+				      Height="28"
+				      Margin="4,0,0,0"
+				      Background="Transparent"
+				      PointerCanceled="ProfileReorderHandle_PointerCanceled"
+				      PointerCaptureLost="ProfileReorderHandle_PointerCaptureLost"
+				      PointerMoved="ProfileReorderHandle_PointerMoved"
+				      PointerPressed="ProfileReorderHandle_PointerPressed"
+				      PointerReleased="ProfileReorderHandle_PointerReleased"
+				      Tag="{x:Bind}"
+				      Visibility="{x:Bind CanDrag, Mode=OneWay}">
+					<FontIcon IsHitTestVisible="False"
+					          FontSize="13"
+					          Glyph="&#xE700;" />
+				</Grid>
+			</Grid>
+		</DataTemplate>
+	</Page.Resources>
 	<Grid>
 		<local:TitleBarControl x:Name="TitleBar"
 		                       Canvas.ZIndex="1" />

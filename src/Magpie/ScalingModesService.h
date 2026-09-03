@@ -9,6 +9,7 @@ struct ScalingMode;
 
 enum class EffectAddedWay {
 	Add,
+	Duplicate,
 	Import
 };
 
@@ -31,7 +32,9 @@ public:
 
 	void RemoveScalingMode(uint32_t index);
 
-	bool MoveScalingMode(uint32_t scalingModeIdx, bool isMoveUp);
+	bool MoveScalingMode(uint32_t fromIndex, uint32_t toIndex);
+
+	void ResetScalingModes();
 
 	// 不能使用 rapidjson::Writer 类型，因为 PrettyWriter 没有重写 Writer 中的方法
 	// 不合理的 API 设计
@@ -41,7 +44,8 @@ public:
 
 	Event<EffectAddedWay> ScalingModeAdded;
 	Event<uint32_t> ScalingModeRemoved;
-	Event<uint32_t, bool> ScalingModeMoved;
+	Event<uint32_t, uint32_t> ScalingModeMoved;
+	Event<> ScalingModesReset;
 
 private:
 	ScalingModesService() = default;

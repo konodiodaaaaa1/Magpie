@@ -66,6 +66,7 @@ void ScalingOptions::Log() const noexcept {
 	cursorScaling: {}
 	captureMethod: {}
 	multiMonitorUsage: {}
+	preferredMonitorId: {}
 	cursorInterpolationMode: {}
 	duplicateFrameDetectionMode: {}
 	fullscreenInitialToolbarState: {}
@@ -99,6 +100,7 @@ void ScalingOptions::Log() const noexcept {
 		cursorScaling,
 		(int)captureMethod,
 		(int)multiMonitorUsage,
+		StrHelper::UTF16ToUTF8(preferredMonitorId),
 		(int)cursorInterpolationMode,
 		(int)duplicateFrameDetectionMode,
 		(int)fullscreenInitialToolbarState,

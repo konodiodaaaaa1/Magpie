@@ -25,12 +25,8 @@ namespace Magpie {
 
 		void Remove();
 
-		Boolean CanMove { get; };
-		Boolean CanMoveUp { get; };
-		Boolean CanMoveDown { get; };
-		void MoveUp();
-		void MoveDown();
+		Boolean CanDrag { get; };
 
-		void RefreshMoveState();
+		void RefreshDragState();
 	}
 }

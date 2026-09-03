@@ -30,7 +30,7 @@ void ScalingModesService::AddScalingMode(std::wstring_view name, int copyFrom) {
 		scalingModes.emplace_back(scalingModes[copyFrom]).name = name;
 	}
 
-	ScalingModeAdded.Invoke(EffectAddedWay::Add);
+	ScalingModeAdded.Invoke(copyFrom < 0 ? EffectAddedWay::Add : EffectAddedWay::Duplicate);
 
 	AppSettings::Get().SaveAsync();
 }
@@ -57,36 +57,46 @@ void ScalingModesService::RemoveScalingMode(uint32_t index) {
 	AppSettings::Get().SaveAsync();
 }
 
-static void UpdateProfileAfterMove(Profile& profile, int idx, int targetIdx) {
-	if (profile.scalingMode == idx) {
-		profile.scalingMode = targetIdx;
-	} else if (profile.scalingMode == targetIdx) {
-		profile.scalingMode = idx;
+static void UpdateProfileAfterMove(Profile& profile, int fromIndex, int toIndex) {
+	if (profile.scalingMode == fromIndex) {
+		profile.scalingMode = toIndex;
+	} else if (fromIndex < toIndex &&
+		profile.scalingMode > fromIndex && profile.scalingMode <= toIndex) {
+		--profile.scalingMode;
+	} else if (toIndex < fromIndex &&
+		profile.scalingMode >= toIndex && profile.scalingMode < fromIndex) {
+		++profile.scalingMode;
 	}
 }
 
-bool ScalingModesService::MoveScalingMode(uint32_t scalingModeIdx, bool isMoveUp) {
-	std::vector<ScalingMode>& profiles = AppSettings::Get().ScalingModes();
-	if (isMoveUp ? scalingModeIdx == 0 : scalingModeIdx + 1 >= (uint32_t)profiles.size()) {
+bool ScalingModesService::MoveScalingMode(uint32_t fromIndex, uint32_t toIndex) {
+	std::vector<ScalingMode>& scalingModes = AppSettings::Get().ScalingModes();
+	if (fromIndex >= scalingModes.size() || toIndex >= scalingModes.size() || fromIndex == toIndex) {
 		return false;
 	}
 
-	int targetIdx = isMoveUp ? (int)scalingModeIdx - 1 : (int)scalingModeIdx + 1;
-	std::swap(profiles[scalingModeIdx], profiles[targetIdx]);
+	ScalingMode movedMode = std::move(scalingModes[fromIndex]);
+	scalingModes.erase(scalingModes.begin() + fromIndex);
+	scalingModes.insert(scalingModes.begin() + toIndex, std::move(movedMode));
 
 	UpdateProfileAfterMove(
 		AppSettings::Get().DefaultProfile(),
-		(int)scalingModeIdx,
-		targetIdx
+		(int)fromIndex,
+		(int)toIndex
 	);
 	for (Profile& profile : AppSettings::Get().Profiles()) {
-		UpdateProfileAfterMove(profile, (int)scalingModeIdx, targetIdx);
+		UpdateProfileAfterMove(profile, (int)fromIndex, (int)toIndex);
 	}
 
-	ScalingModeMoved.Invoke(scalingModeIdx, isMoveUp);
+	ScalingModeMoved.Invoke(fromIndex, toIndex);
 
 	AppSettings::Get().SaveAsync();
 	return true;
+}
+
+void ScalingModesService::ResetScalingModes() {
+	AppSettings::Get().ResetScalingModes();
+	ScalingModesReset.Invoke();
 }
 
 static void WriteScalingMode(rapidjson::PrettyWriter<rapidjson::StringBuffer>& writer, const ScalingMode& scaleMode) {

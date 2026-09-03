@@ -41,15 +41,27 @@ void ToastService::Uninitialize() noexcept {
 	_toastThread.join();
 }
 
-void ToastService::ShowMessageOnWindow(std::wstring_view title, std::wstring_view message, HWND hwndTarget) const noexcept {
-	_Dispatcher().TryEnqueue([this, title(std::wstring(title)), message(std::wstring(message)), hwndTarget]() {
-		_toastPage->ShowMessageOnWindow(std::move(title), std::move(message), hwndTarget, true);
+void ToastService::ShowMessageOnWindow(
+	std::wstring_view title,
+	std::wstring_view message,
+	HWND hwndTarget,
+	std::chrono::milliseconds displayDuration) const noexcept {
+	_Dispatcher().TryEnqueue([this, title(std::wstring(title)), message(std::wstring(message)),
+		hwndTarget, displayDuration]() {
+		_toastPage->ShowMessageOnWindow(
+			std::move(title), std::move(message), hwndTarget, true, displayDuration);
 	});
 }
 
-void ToastService::ShowMessageInApp(std::wstring_view title, std::wstring_view message) const noexcept {
-	_Dispatcher().TryEnqueue([this, title(std::wstring(title)), message(std::wstring(message))]() {
-		_toastPage->ShowMessageOnWindow(std::move(title), std::move(message), App::Get().MainWindow().Handle(), false);
+void ToastService::ShowMessageInApp(
+	std::wstring_view title,
+	std::wstring_view message,
+	std::chrono::milliseconds displayDuration) const noexcept {
+	_Dispatcher().TryEnqueue([this, title(std::wstring(title)), message(std::wstring(message)),
+		displayDuration]() {
+		_toastPage->ShowMessageOnWindow(
+			std::move(title), std::move(message), App::Get().MainWindow().Handle(), false,
+			displayDuration);
 	});
 }
 

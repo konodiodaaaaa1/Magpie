@@ -3,6 +3,7 @@
 #if __has_include("ProfileViewModel.g.cpp")
 #include "ProfileViewModel.g.cpp"
 #endif
+#include "XamlHelper.h"
 #include "Profile.h"
 #include "AppXReader.h"
 #include "IconHelper.h"
@@ -28,7 +29,8 @@ using namespace Windows::UI::Xaml::Media::Imaging;
 
 namespace winrt::Magpie::implementation {
 
-ProfileViewModel::ProfileViewModel(int profileIdx) : _isDefaultProfile(profileIdx < 0) {
+ProfileViewModel::ProfileViewModel(int profileIdx, bool initializePageData)
+	: _isDefaultProfile(profileIdx < 0) {
 	if (_isDefaultProfile) {
 		_data = &ProfileService::Get().DefaultProfile();
 	} else {
@@ -36,11 +38,13 @@ ProfileViewModel::ProfileViewModel(int profileIdx) : _isDefaultProfile(profileId
 		_data = &ProfileService::Get().GetProfile(profileIdx);
 
 		// 占位
-		_icon = FontIcon();
+		if (initializePageData) {
+			_icon = FontIcon();
 
-		_appThemeChangedRevoker = App::Get().ThemeChanged(auto_revoke, [this](bool) { _LoadIcon(); });
-		_dpiChangedRevoker = App::Get().MainWindow().DpiChanged(
-			auto_revoke, [this](uint32_t) { _LoadIcon(); });
+			_appThemeChangedRevoker = App::Get().ThemeChanged(auto_revoke, [this](bool) { _LoadIcon(); });
+			_dpiChangedRevoker = App::Get().MainWindow().DpiChanged(
+				auto_revoke, [this](uint32_t) { _LoadIcon(); });
+		}
 
 		if (_data->isPackaged) {
 			AppXReader appxReader;
@@ -49,8 +53,16 @@ ProfileViewModel::ProfileViewModel(int profileIdx) : _isDefaultProfile(profileId
 			_isProgramExist = Win32Helper::FileExists(_data->pathRule.c_str());
 		}
 
-		_LoadIcon();
+		if (initializePageData) {
+			_LoadIcon();
+		}
 	}
+
+	if (!initializePageData) {
+		return;
+	}
+
+	_BuildMonitorOptions();
 
 	_adaptersChangedRevoker = AdaptersService::Get().AdaptersChanged(auto_revoke,
 		std::bind_front(&ProfileViewModel::_AdaptersService_AdaptersChanged, this));
@@ -58,16 +70,27 @@ ProfileViewModel::ProfileViewModel(int profileIdx) : _isDefaultProfile(profileId
 
 ProfileViewModel::~ProfileViewModel() {}
 
+void ProfileViewModel::Rebind(uint32_t index) noexcept {
+	if (_isDefaultProfile) {
+		return;
+	}
+
+	_index = index;
+	_data = &ProfileService::Get().GetProfile(index);
+	RaisePropertyChanged(L"Name");
+	RaisePropertyChanged(L"CanDrag");
+}
+
 bool ProfileViewModel::IsNotDefaultProfile() const noexcept {
-	return !_data->name.empty();
+	return _data && !_data->name.empty();
 }
 
 bool ProfileViewModel::IsNotPackaged() const noexcept {
-	return !_data->isPackaged;
+	return _data && !_data->isPackaged;
 }
 
 fire_and_forget ProfileViewModel::OpenProgramLocation() const noexcept {
-	if (!_isProgramExist) {
+	if (!_data || !_isProgramExist) {
 		co_return;
 	}
 
@@ -122,7 +145,7 @@ static std::wstring GetStartFolderForSettingLauncher(const Profile& profile) noe
 }
 
 fire_and_forget ProfileViewModel::ChangeExeForLaunching() noexcept {
-	if (!_isProgramExist || _data->isPackaged) {
+	if (!_data || !_isProgramExist || _data->isPackaged) {
 		co_return;
 	}
 
@@ -177,6 +200,10 @@ fire_and_forget ProfileViewModel::ChangeExeForLaunching() noexcept {
 }
 
 hstring ProfileViewModel::Name() const noexcept {
+	if (!_data) {
+		return {};
+	}
+
 	if (_data->name.empty()) {
 		return ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID)
 			.GetString(L"Root_Defaults/Content");
@@ -218,7 +245,7 @@ static void LaunchWin32App(const Profile& profile) noexcept {
 }
 
 void ProfileViewModel::Launch() const noexcept {
-	if (!_isProgramExist) {
+	if (!_data || !_isProgramExist) {
 		return;
 	}
 
@@ -230,6 +257,10 @@ void ProfileViewModel::Launch() const noexcept {
 }
 
 void ProfileViewModel::RenameText(const hstring& value) {
+	if (!_data) {
+		return;
+	}
+
 	_renameText = value;
 	RaisePropertyChanged(L"RenameText");
 
@@ -243,7 +274,7 @@ void ProfileViewModel::RenameText(const hstring& value) {
 }
 
 void ProfileViewModel::Rename() {
-	if (_isDefaultProfile || !_isRenameConfirmButtonEnabled) {
+	if (_isDefaultProfile || !_data || !_isRenameConfirmButtonEnabled) {
 		return;
 	}
 
@@ -251,53 +282,43 @@ void ProfileViewModel::Rename() {
 	RaisePropertyChanged(L"Name");
 }
 
-bool ProfileViewModel::CanMoveUp() const noexcept {
-	return !_isDefaultProfile && _index != 0;
+void ProfileViewModel::RenameFlyout_Opening() {
+	if (_isDefaultProfile || !_data) {
+		return;
+	}
+
+	RenameText(Name());
+	RaisePropertyChanged(L"RenameTextBoxSelectionStart");
 }
 
-bool ProfileViewModel::CanMoveDown() const noexcept {
-	return !_isDefaultProfile && _index + 1 < ProfileService::Get().GetProfileCount();
+void ProfileViewModel::RenameTextBox_KeyDown(
+	IInspectable const&,
+	Input::KeyRoutedEventArgs const& args) {
+	if (args.Key() == VirtualKey::Enter) {
+		RenameButton_Click();
+	}
 }
 
-void ProfileViewModel::MoveUp() {
-	if (_isDefaultProfile) {
+void ProfileViewModel::RenameButton_Click() {
+	if (_isDefaultProfile || !_data || !_isRenameConfirmButtonEnabled) {
 		return;
 	}
 
-	ProfileService& profileService = ProfileService::Get();
-	if (!profileService.MoveProfile(_index, true)) {
-		return;
-	}
-
-	--_index;
-	_data = &profileService.GetProfile(_index);
-
-	RaisePropertyChanged(L"CanMoveUp");
-	RaisePropertyChanged(L"CanMoveDown");
+	XamlHelper::ClosePopups(App::Get().RootPage()->XamlRoot());
+	Rename();
 }
 
-void ProfileViewModel::MoveDown() {
-	if (_isDefaultProfile) {
-		return;
-	}
-
-	ProfileService& profileService = ProfileService::Get();
-	if (!profileService.MoveProfile(_index, false)) {
-		return;
-	}
-
-	++_index;
-	_data = &profileService.GetProfile(_index);
-
-	RaisePropertyChanged(L"CanMoveUp");
-	RaisePropertyChanged(L"CanMoveDown");
+bool ProfileViewModel::CanDrag() const noexcept {
+	return !_isDefaultProfile && _data && ProfileService::Get().GetProfileCount() > 1;
 }
 
 void ProfileViewModel::Delete() {
-	if (_isDefaultProfile) {
+	if (_isDefaultProfile || !_data) {
 		return;
 	}
 
+	auto lifetime = get_strong();
+	XamlHelper::ClosePopups(App::Get().RootPage()->XamlRoot());
 	ProfileService::Get().RemoveProfile(_index);
 	_data = nullptr;
 }
@@ -421,24 +442,107 @@ bool ProfileViewModel::HasMultipleMonitors() const noexcept {
 	return GetSystemMetrics(SM_CMONITORS) > 1;
 }
 
-int ProfileViewModel::MultiMonitorUsage() const noexcept {
-	return (int)_data->multiMonitorUsage;
+void ProfileViewModel::_BuildMonitorOptions() {
+	ResourceLoader resourceLoader =
+		ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
+	std::vector<IInspectable> options;
+	options.emplace_back(box_value(resourceLoader.GetString(
+		L"Profile_General_Multimonitor_Closest/Content")));
+	options.emplace_back(box_value(resourceLoader.GetString(
+		L"Profile_General_Multimonitor_Intersected/Content")));
+	options.emplace_back(box_value(resourceLoader.GetString(
+		L"Profile_General_Multimonitor_All/Content")));
+
+	const std::vector<Win32Helper::DisplayMonitorInfo> monitors =
+		Win32Helper::GetDisplayMonitors();
+	_monitorIds.reserve(monitors.size() + 1);
+	_monitorNames.reserve(monitors.size() + 1);
+	for (size_t i = 0; i < monitors.size(); ++i) {
+		const Win32Helper::DisplayMonitorInfo& monitor = monitors[i];
+		const SIZE size = Win32Helper::GetSizeOfRect(monitor.rect);
+		options.emplace_back(box_value(hstring(fmt::format(
+			L"{} — {}×{} (#{})",
+			monitor.friendlyName,
+			size.cx,
+			size.cy,
+			i + 1))));
+		_monitorIds.emplace_back(monitor.deviceId);
+		_monitorNames.emplace_back(monitor.friendlyName);
+	}
+
+	if (_data->multiMonitorUsage == ::Magpie::MultiMonitorUsage::Specific &&
+		!_data->preferredMonitorId.empty()) {
+		const bool configuredMonitorFound = std::any_of(
+			_monitorIds.begin(), _monitorIds.end(), [this](const std::wstring& id) {
+				return CompareStringOrdinal(
+					id.c_str(), (int)id.size(),
+					_data->preferredMonitorId.c_str(),
+					(int)_data->preferredMonitorId.size(), TRUE) == CSTR_EQUAL;
+			});
+		if (!configuredMonitorFound) {
+			const hstring unavailable = resourceLoader.GetString(
+				L"Profile_General_Multimonitor_Unavailable");
+			const std::wstring name = _data->preferredMonitorName.empty() ?
+				_data->preferredMonitorId : _data->preferredMonitorName;
+			options.emplace_back(box_value(hstring(fmt::format(
+				L"{} ({})", name, unavailable.c_str()))));
+			_monitorIds.emplace_back(_data->preferredMonitorId);
+			_monitorNames.emplace_back(name);
+		}
+	}
+
+	_monitorOptions = single_threaded_vector(std::move(options));
 }
 
-void ProfileViewModel::MultiMonitorUsage(int value) {
+int ProfileViewModel::MonitorSelection() const noexcept {
+	if (_data->multiMonitorUsage != ::Magpie::MultiMonitorUsage::Specific) {
+		return (int)_data->multiMonitorUsage;
+	}
+
+	for (size_t i = 0; i < _monitorIds.size(); ++i) {
+		if (CompareStringOrdinal(
+			_monitorIds[i].c_str(), (int)_monitorIds[i].size(),
+			_data->preferredMonitorId.c_str(),
+			(int)_data->preferredMonitorId.size(), TRUE) == CSTR_EQUAL) {
+			return (int)i + (int)::Magpie::MultiMonitorUsage::Specific;
+		}
+	}
+
+	return (int)::Magpie::MultiMonitorUsage::Closest;
+}
+
+void ProfileViewModel::MonitorSelection(int value) {
 	if (value < 0) {
 		return;
 	}
 
-	::Magpie::MultiMonitorUsage multiMonitorUsage = (::Magpie::MultiMonitorUsage)value;
-	if (_data->multiMonitorUsage == multiMonitorUsage) {
+	const int specificBase = (int)::Magpie::MultiMonitorUsage::Specific;
+	::Magpie::MultiMonitorUsage usage;
+	std::wstring monitorId;
+	std::wstring monitorName;
+	if (value < specificBase) {
+		usage = (::Magpie::MultiMonitorUsage)value;
+	} else {
+		const size_t monitorIndex = (size_t)(value - specificBase);
+		if (monitorIndex >= _monitorIds.size()) {
+			return;
+		}
+		usage = ::Magpie::MultiMonitorUsage::Specific;
+		monitorId = _monitorIds[monitorIndex];
+		monitorName = _monitorNames[monitorIndex];
+	}
+
+	if (_data->multiMonitorUsage == usage &&
+		_data->preferredMonitorId == monitorId) {
 		return;
 	}
 
-	_data->multiMonitorUsage = multiMonitorUsage;
+	_data->multiMonitorUsage = usage;
+	_data->preferredMonitorId = std::move(monitorId);
+	_data->preferredMonitorName = std::move(monitorName);
 	AppSettings::Get().SaveAsync();
 
-	RaisePropertyChanged(L"MultiMonitorUsage");
+	RaisePropertyChanged(L"MonitorSelection");
 }
 
 int ProfileViewModel::InitialWindowedScaleFactor() const noexcept {

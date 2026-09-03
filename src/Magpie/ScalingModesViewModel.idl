@@ -4,10 +4,6 @@ namespace Magpie {
         void Import();
         
         IObservableVector<IInspectable> ScalingModes { get; };
-
-        String NewScalingModeName;
-        IVector<IInspectable> NewScalingModeCopyFromList { get; };
-        Int32 NewScalingModeCopyFrom;
-        Boolean IsAddButtonEnabled { get; };
+        Boolean CanReorderScalingModes { get; };
     }
 }

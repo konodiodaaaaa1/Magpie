@@ -17,6 +17,10 @@
 #include "MainWindow.h"
 #include "CandidateWindowItem.h"
 #include "CommonSharedConstants.h"
+#include "Logger.h"
+#include <cmath>
+#include <winrt/Windows.Devices.Input.h>
+#include <winrt/Windows.UI.Input.h>
 
 using namespace ::Magpie;
 using namespace winrt;
@@ -40,6 +44,7 @@ RootPage::RootPage() {
 }
 
 RootPage::~RootPage() {
+	_FinishProfileReorder(false);
 	ContentDialogHelper::CloseActiveDialog();
 
 	// 不手动置空会内存泄露
@@ -68,7 +73,7 @@ void RootPage::InitializeComponent() {
 	_profileRemovedRevoker = profileService.ProfileRemoved(
 		auto_revoke, std::bind_front(&RootPage::_ProfileService_ProfileRemoved, this));
 	_profileMovedRevoker = profileService.ProfileMoved(
-		auto_revoke, std::bind_front(&RootPage::_ProfileService_ProfileReordered, this));
+		auto_revoke, std::bind_front(&RootPage::_ProfileService_ProfileMoved, this));
 
 	const Win32Helper::OSVersion& osVersion = Win32Helper::GetOSVersion();
 	if (osVersion.Is22H2OrNewer()) {
@@ -77,13 +82,11 @@ void RootPage::InitializeComponent() {
 	}
 
 	IVector<IInspectable> navMenuItems = RootNavigationView().MenuItems();
-	for (const Profile& profile : AppSettings::Get().Profiles()) {
-		MUXC::NavigationViewItem item;
-		item.Content(box_value(profile.name));
+	const std::vector<Profile>& profiles = AppSettings::Get().Profiles();
+	_profileNavigationViewModels.reserve(profiles.size());
+	for (uint32_t i = 0; i < profiles.size(); ++i) {
+		MUXC::NavigationViewItem item = _CreateProfileNavigationViewItem(i, profiles[i]);
 		// 用于占位
-		item.Icon(FontIcon());
-		_LoadIcon(item, profile);
-
 		navMenuItems.InsertAt(navMenuItems.Size() - 1, item);
 	}
 }
@@ -335,6 +338,58 @@ void RootPage::NewProfileNameTextBox_KeyDown(IInspectable const&, Input::KeyRout
 	}
 }
 
+void RootPage::ProfileMoreOptionsButton_Click(
+	IInspectable const& sender,
+	RoutedEventArgs const&) {
+	_profileMoreOptionsButton = sender.try_as<Button>();
+}
+
+static void QueueShowProfileAttachedFlyout(
+	IInspectable const& sender,
+	Button const& placementTarget) {
+	FrameworkElement menuItem = sender.try_as<FrameworkElement>();
+	if (!menuItem || !placementTarget) {
+		return;
+	}
+
+	FlyoutBase flyout = FlyoutBase::GetAttachedFlyout(menuItem);
+	if (flyout) {
+		App::Get().Dispatcher().TryEnqueue(
+			DispatcherQueuePriority::Low,
+			[flyout, placementTarget]() {
+				try {
+					flyout.ShowAt(placementTarget);
+				} catch (...) {
+					// The profile item may have been removed before the queued callback.
+				}
+			});
+	}
+}
+
+void RootPage::ProfileRenameMenuItem_Click(
+	IInspectable const& sender,
+	RoutedEventArgs const&) {
+	Button placementTarget = std::exchange(_profileMoreOptionsButton, nullptr);
+	QueueShowProfileAttachedFlyout(sender, placementTarget);
+}
+
+void RootPage::ProfileDeleteMenuItem_Click(
+	IInspectable const& sender,
+	RoutedEventArgs const&) {
+	Button placementTarget = std::exchange(_profileMoreOptionsButton, nullptr);
+	QueueShowProfileAttachedFlyout(sender, placementTarget);
+}
+
+void RootPage::ProfileRenameTextBox_Loaded(
+	IInspectable const& sender,
+	RoutedEventArgs const&) {
+	TextBox textBox = sender.try_as<TextBox>();
+	if (textBox) {
+		textBox.Focus(FocusState::Programmatic);
+		textBox.SelectAll();
+	}
+}
+
 void RootPage::NavigateToAboutPage() {
 	MUXC::NavigationView nv = RootNavigationView();
 	nv.SelectedItem(nv.FooterMenuItems().GetAt(0));
@@ -370,6 +425,38 @@ void RootPage::_UpdateTheme(bool updateIcons) {
 
 	if (updateIcons && IsLoaded()) {
 		_UpdateIcons(true);
+	}
+}
+
+MUXC::NavigationViewItem RootPage::_CreateProfileNavigationViewItem(
+	uint32_t index,
+	const Profile& profile) {
+	MUXC::NavigationViewItem item;
+	item.HorizontalContentAlignment(HorizontalAlignment::Stretch);
+
+	auto viewModel = make_self<ProfileViewModel>(static_cast<int>(index), false);
+	// Keep the profile template off NavigationViewItem itself. Its presenter also owns the
+	// icon slot, and applying the template there can make the whole profile row appear as
+	// a scaled-down icon instead of the executable icon.
+	ContentPresenter contentPresenter;
+	contentPresenter.HorizontalAlignment(HorizontalAlignment::Stretch);
+	contentPresenter.HorizontalContentAlignment(HorizontalAlignment::Stretch);
+	contentPresenter.Content(*viewModel);
+	contentPresenter.ContentTemplate(Resources()
+		.Lookup(box_value(L"ProfileNavigationItemContentTemplate"))
+		.as<DataTemplate>());
+	item.Content(contentPresenter);
+	_profileNavigationViewModels.emplace_back(std::move(viewModel));
+
+	// Reserve the icon slot while the executable icon is loaded asynchronously.
+	item.Icon(FontIcon());
+	_LoadIcon(item, profile);
+	return item;
+}
+
+void RootPage::_RebindProfileNavigationViewModels() noexcept {
+	for (uint32_t i = 0; i < _profileNavigationViewModels.size(); ++i) {
+		_profileNavigationViewModels[i]->Rebind(i);
 	}
 }
 
@@ -449,23 +536,401 @@ void RootPage::_UpdateIcons(bool skipDesktop) {
 	}
 }
 
-void RootPage::_ProfileService_ProfileAdded(Profile& profile) {
-	MUXC::NavigationViewItem item;
-	item.Content(box_value(profile.name));
-	// 用于占位
-	item.Icon(FontIcon());
-	_LoadIcon(item, profile);
+MUXC::NavigationViewItem RootPage::_FindParentProfileNavigationViewItem(
+	DependencyObject const& element) const noexcept {
+	DependencyObject current = VisualTreeHelper::GetParent(element);
+	while (current) {
+		if (MUXC::NavigationViewItem item = current.try_as<MUXC::NavigationViewItem>()) {
+			return item;
+		}
+		current = VisualTreeHelper::GetParent(current);
+	}
 
+	return nullptr;
+}
+
+uint32_t RootPage::_GetProfileReorderTargetIndex(double pointerY) const noexcept {
+	const uint32_t size = static_cast<uint32_t>(_profileNavigationViewModels.size());
+	if (!_profileReorderItem || _profileReorderOriginalIndex >= size ||
+		_profileReorderItemCenters.size() != size) {
+		return _profileReorderOriginalIndex;
+	}
+
+	try {
+		uint32_t targetIndex = 0;
+		bool foundContainer = false;
+		for (uint32_t i = 0; i < size; ++i) {
+			if (i == _profileReorderOriginalIndex) {
+				continue;
+			}
+
+			const double centerY = _profileReorderItemCenters[i];
+			if (!std::isfinite(centerY)) {
+				continue;
+			}
+
+			foundContainer = true;
+			if (pointerY < centerY) {
+				break;
+			}
+			++targetIndex;
+		}
+
+		return foundContainer ? std::min(targetIndex, size - 1) : _profileReorderOriginalIndex;
+	} catch (...) {
+		return _profileReorderOriginalIndex;
+	}
+}
+
+void RootPage::_PrepareProfileReorderPreview() noexcept {
+	_profileReorderPreviewItems.clear();
+	_profileReorderItemCenters.clear();
+	_profileReorderSlotExtent = 0;
+
+	if (!_profileReorderContainer || !_profileReorderItem) {
+		return;
+	}
+
+	try {
+		MUXC::NavigationView nv = RootNavigationView();
+		IVector<IInspectable> menuItems = nv.MenuItems();
+		const uint32_t size = static_cast<uint32_t>(_profileNavigationViewModels.size());
+		_profileReorderPreviewItems.reserve(size > 0 ? size - 1 : 0);
+		_profileReorderItemCenters.assign(size, std::numeric_limits<double>::quiet_NaN());
+
+		double draggedTop = 0;
+		double nextTop = 0;
+		bool hasDraggedTop = false;
+		bool hasNextTop = false;
+
+		for (uint32_t i = 0; i < size; ++i) {
+			FrameworkElement container = menuItems
+				.GetAt(FIRST_PROFILE_ITEM_IDX + i)
+				.try_as<FrameworkElement>();
+			if (!container) {
+				continue;
+			}
+
+			const Point topLeft = container.TransformToVisual(nv).TransformPoint({});
+			_profileReorderItemCenters[i] = topLeft.Y + container.ActualHeight() / 2;
+
+			if (i == _profileReorderOriginalIndex) {
+				draggedTop = topLeft.Y;
+				hasDraggedTop = true;
+				continue;
+			}
+			if (i == _profileReorderOriginalIndex + 1) {
+				nextTop = topLeft.Y;
+				hasNextTop = true;
+			}
+
+			ProfileReorderPreviewItem preview;
+			preview.index = i;
+			preview.container = container;
+			preview.originalRenderTransform = container.RenderTransform();
+			preview.previewTransform = CompositeTransform();
+
+			TransformGroup transforms;
+			if (preview.originalRenderTransform) {
+				transforms.Children().Append(preview.originalRenderTransform);
+			}
+			transforms.Children().Append(preview.previewTransform);
+			container.RenderTransform(transforms);
+
+			_profileReorderPreviewItems.emplace_back(std::move(preview));
+		}
+
+		if (hasDraggedTop && hasNextTop && nextTop > draggedTop) {
+			_profileReorderSlotExtent = nextTop - draggedTop;
+		} else {
+			const Thickness margin = _profileReorderContainer.Margin();
+			_profileReorderSlotExtent =
+				_profileReorderContainer.ActualHeight() + margin.Top + margin.Bottom;
+		}
+	} catch (...) {
+		_ClearProfileReorderPreview();
+	}
+}
+
+void RootPage::_UpdateProfileReorderPreview(uint32_t targetIndex) noexcept {
+	if (_profileReorderSlotExtent <= 0) {
+		return;
+	}
+
+	try {
+		for (ProfileReorderPreviewItem& preview : _profileReorderPreviewItems) {
+			double offset = 0;
+			if (_profileReorderOriginalIndex < targetIndex &&
+				preview.index > _profileReorderOriginalIndex && preview.index <= targetIndex) {
+				offset = -_profileReorderSlotExtent;
+			} else if (targetIndex < _profileReorderOriginalIndex &&
+				preview.index >= targetIndex && preview.index < _profileReorderOriginalIndex) {
+				offset = _profileReorderSlotExtent;
+			}
+
+			if (preview.targetOffset == offset) {
+				continue;
+			}
+
+			preview.previewTransform.TranslateY(offset);
+			preview.targetOffset = offset;
+		}
+	} catch (...) {
+		// The next pointer event can continue updating any remaining containers.
+	}
+}
+
+void RootPage::_ClearProfileReorderPreview() noexcept {
+	for (ProfileReorderPreviewItem& preview : _profileReorderPreviewItems) {
+		try {
+			preview.container.RenderTransform(preview.originalRenderTransform);
+		} catch (...) {
+		}
+	}
+
+	_profileReorderPreviewItems.clear();
+	_profileReorderItemCenters.clear();
+	_profileReorderSlotExtent = 0;
+}
+
+void RootPage::_QueueFinishProfileReorder(bool commit) noexcept {
+	if (!_profileReorderHandle) {
+		return;
+	}
+
+	_queuedProfileReorderCommit = _queuedProfileReorderCommit || commit;
+	if (_isProfileReorderFinishQueued) {
+		return;
+	}
+
+	_isProfileReorderFinishQueued = true;
+	const uint32_t pointerId = _profileReorderPointerId;
+	try {
+		weak_ref<RootPage> weakThis = get_weak();
+		if (App::Get().Dispatcher().TryEnqueue(
+			DispatcherQueuePriority::Low,
+			[weakThis, pointerId]() {
+				com_ptr<RootPage> self = weakThis.get();
+				if (!self || !self->_isProfileReorderFinishQueued ||
+					self->_profileReorderPointerId != pointerId) {
+					return;
+				}
+
+				const bool shouldCommit =
+					std::exchange(self->_queuedProfileReorderCommit, false);
+				self->_isProfileReorderFinishQueued = false;
+				self->_FinishProfileReorder(shouldCommit);
+			})) {
+			return;
+		}
+	} catch (...) {
+	}
+
+	_isProfileReorderFinishQueued = false;
+	_queuedProfileReorderCommit = false;
+}
+
+void RootPage::_FinishProfileReorder(bool commit) noexcept {
+	FrameworkElement container = std::exchange(_profileReorderContainer, nullptr);
+	MUXC::NavigationViewItem item = std::exchange(_profileReorderItem, nullptr);
+	const uint32_t targetIndex = _profileReorderTargetIndex;
+	const bool wasDragging = _isProfileReorderDragging;
+
+	if (commit && wasDragging && item) {
+		try {
+			MUXC::NavigationView nv = RootNavigationView();
+			IVector<IInspectable> menuItems = nv.MenuItems();
+			uint32_t menuIndex = 0;
+			if (menuItems.IndexOf(item, menuIndex) && menuIndex >= FIRST_PROFILE_ITEM_IDX) {
+				const uint32_t currentIndex = menuIndex - FIRST_PROFILE_ITEM_IDX;
+				const uint32_t profileCount = ProfileService::Get().GetProfileCount();
+				if (currentIndex < profileCount && targetIndex < profileCount &&
+					currentIndex != targetIndex) {
+					// NavigationView performs layout synchronously for collection changes.
+					// Remove all preview transforms before it receives the notification. The
+					// atomic menu replacement below completes in the same UI tick, matching
+					// the immediate exchange behavior used by the scaling-mode list.
+					_ClearProfileReorderPreview();
+					if (container) {
+						container.RenderTransform(_profileOriginalRenderTransform);
+					}
+
+					if (ProfileService::Get().MoveProfile(currentIndex, targetIndex)) {
+						nv.UpdateLayout();
+					}
+				}
+			}
+		} catch (...) {
+			// The page can be closing while pointer completion is queued.
+		}
+	}
+
+	_ClearProfileReorderPreview();
+
+	if (container) {
+		try {
+			container.RenderTransform(_profileOriginalRenderTransform);
+			container.Opacity(_profileOriginalOpacity);
+			Canvas::SetZIndex(container, _profileOriginalZIndex);
+		} catch (...) {
+		}
+	}
+
+	_profileReorderHandle = nullptr;
+	_profileOriginalRenderTransform = nullptr;
+	_profileDragTransform = nullptr;
+	_profileReorderPointerId = 0;
+	_profileReorderOriginalIndex = 0;
+	_isProfileReorderDragging = false;
+	_isProfileReorderFinishQueued = false;
+	_queuedProfileReorderCommit = false;
+
+}
+
+void RootPage::ProfileReorderHandle_PointerPressed(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	try {
+		FrameworkElement handle = sender.try_as<FrameworkElement>();
+		if (_profileReorderHandle || !handle || !handle.Tag() ||
+			_profileNavigationViewModels.size() < 2) {
+			return;
+		}
+
+		auto pointerPoint = args.GetCurrentPoint(handle);
+		if (pointerPoint.PointerDevice().PointerDeviceType() ==
+			Windows::Devices::Input::PointerDeviceType::Mouse &&
+			!pointerPoint.Properties().IsLeftButtonPressed()) {
+			return;
+		}
+
+		MUXC::NavigationViewItem item = _FindParentProfileNavigationViewItem(handle);
+		if (!item) {
+			return;
+		}
+
+		IVector<IInspectable> menuItems = RootNavigationView().MenuItems();
+		uint32_t menuIndex = 0;
+		if (!menuItems.IndexOf(item, menuIndex) || menuIndex < FIRST_PROFILE_ITEM_IDX) {
+			return;
+		}
+
+		const uint32_t profileIndex = menuIndex - FIRST_PROFILE_ITEM_IDX;
+		if (profileIndex >= _profileNavigationViewModels.size() ||
+			!handle.CapturePointer(args.Pointer())) {
+			return;
+		}
+
+		FrameworkElement container = item;
+		_profileReorderHandle = handle;
+		_profileReorderContainer = container;
+		_profileReorderItem = item;
+		_profileReorderOriginalIndex = profileIndex;
+		_profileOriginalRenderTransform = container.RenderTransform();
+		_profileOriginalOpacity = container.Opacity();
+		_profileOriginalZIndex = Canvas::GetZIndex(container);
+		_profileDragTransform = CompositeTransform();
+
+		TransformGroup transforms;
+		if (_profileOriginalRenderTransform) {
+			transforms.Children().Append(_profileOriginalRenderTransform);
+		}
+		transforms.Children().Append(_profileDragTransform);
+		container.RenderTransform(transforms);
+		container.Opacity(0.92);
+		Canvas::SetZIndex(container, 1000);
+		_PrepareProfileReorderPreview();
+
+		_profilePointerStartY = args.GetCurrentPoint(RootNavigationView()).Position().Y;
+		_profileReorderTargetIndex = profileIndex;
+		_profileReorderPointerId = args.Pointer().PointerId();
+		_isProfileReorderDragging = false;
+		args.Handled(true);
+	} catch (const hresult_error& e) {
+		Logger::Get().ComWarn("Failed to start profile drag", e.code());
+		_QueueFinishProfileReorder(false);
+	} catch (...) {
+		Logger::Get().Warn("Failed to start profile drag");
+		_QueueFinishProfileReorder(false);
+	}
+}
+
+void RootPage::ProfileReorderHandle_PointerMoved(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	try {
+		if (!_profileReorderHandle || sender != _profileReorderHandle ||
+			args.Pointer().PointerId() != _profileReorderPointerId) {
+			return;
+		}
+
+		const double pointerY = args.GetCurrentPoint(RootNavigationView()).Position().Y;
+		const double deltaY = pointerY - _profilePointerStartY;
+		if (!_isProfileReorderDragging && std::abs(deltaY) >= 3) {
+			_isProfileReorderDragging = true;
+		}
+
+		if (_isProfileReorderDragging) {
+			_profileDragTransform.TranslateY(deltaY);
+			const uint32_t targetIndex = _GetProfileReorderTargetIndex(pointerY);
+			if (targetIndex != _profileReorderTargetIndex) {
+				_profileReorderTargetIndex = targetIndex;
+				_UpdateProfileReorderPreview(targetIndex);
+			}
+		}
+		args.Handled(true);
+	} catch (const hresult_error& e) {
+		Logger::Get().ComWarn("Failed to update profile drag", e.code());
+		_QueueFinishProfileReorder(false);
+	} catch (...) {
+		Logger::Get().Warn("Failed to update profile drag");
+		_QueueFinishProfileReorder(false);
+	}
+}
+
+void RootPage::ProfileReorderHandle_PointerReleased(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	if (_profileReorderHandle && sender == _profileReorderHandle &&
+		args.Pointer().PointerId() == _profileReorderPointerId) {
+		args.Handled(true);
+		_QueueFinishProfileReorder(true);
+	}
+}
+
+void RootPage::ProfileReorderHandle_PointerCanceled(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	if (_profileReorderHandle && sender == _profileReorderHandle &&
+		args.Pointer().PointerId() == _profileReorderPointerId) {
+		args.Handled(true);
+		_QueueFinishProfileReorder(false);
+	}
+}
+
+void RootPage::ProfileReorderHandle_PointerCaptureLost(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	if (_profileReorderHandle && sender == _profileReorderHandle &&
+		args.Pointer().PointerId() == _profileReorderPointerId) {
+		_QueueFinishProfileReorder(false);
+	}
+}
+
+void RootPage::_ProfileService_ProfileAdded(Profile& profile) {
+	_RebindProfileNavigationViewModels();
+	const uint32_t index = ProfileService::Get().GetProfileCount() - 1;
+	MUXC::NavigationViewItem item = _CreateProfileNavigationViewItem(index, profile);
+	// 用于占位
 	IVector<IInspectable> navMenuItems = RootNavigationView().MenuItems();
 	navMenuItems.InsertAt(navMenuItems.Size() - 1, item);
 	RootNavigationView().SelectedItem(item);
 }
 
 void RootPage::_ProfileService_ProfileRenamed(uint32_t idx) {
-	RootNavigationView().MenuItems()
-		.GetAt(FIRST_PROFILE_ITEM_IDX + idx)
-		.try_as<MUXC::NavigationViewItem>()
-		.Content(box_value(AppSettings::Get().Profiles()[idx].name));
+	if (idx < _profileNavigationViewModels.size()) {
+		_profileNavigationViewModels[idx]->Rebind(idx);
+	}
 }
 
 void RootPage::_ProfileService_ProfileRemoved(uint32_t idx) {
@@ -473,17 +938,57 @@ void RootPage::_ProfileService_ProfileRemoved(uint32_t idx) {
 	IVector<IInspectable> menuItems = nv.MenuItems();
 	nv.SelectedItem(menuItems.GetAt(FIRST_PROFILE_ITEM_IDX - 1));
 	menuItems.RemoveAt(FIRST_PROFILE_ITEM_IDX + idx);
+	if (idx < _profileNavigationViewModels.size()) {
+		_profileNavigationViewModels.erase(_profileNavigationViewModels.begin() + idx);
+	}
+	_RebindProfileNavigationViewModels();
 }
 
-void RootPage::_ProfileService_ProfileReordered(uint32_t profileIdx, bool isMoveUp) {
-	IVector<IInspectable> menuItems = RootNavigationView().MenuItems();
+void RootPage::_ProfileService_ProfileMoved(uint32_t fromIndex, uint32_t toIndex) {
+	if (fromIndex >= _profileNavigationViewModels.size() ||
+		toIndex >= _profileNavigationViewModels.size() ||
+		fromIndex == toIndex) {
+		return;
+	}
 
-	uint32_t curIdx = FIRST_PROFILE_ITEM_IDX + profileIdx;
-	uint32_t otherIdx = isMoveUp ? curIdx - 1 : curIdx + 1;
-	
-	IInspectable otherItem = menuItems.GetAt(otherIdx);
-	menuItems.RemoveAt(otherIdx);
-	menuItems.InsertAt(curIdx, otherItem);
+	MUXC::NavigationView nv = RootNavigationView();
+	IVector<IInspectable> menuItems = nv.MenuItems();
+	IInspectable selectedItem = nv.SelectedItem();
+
+	const uint32_t fromMenuIndex = FIRST_PROFILE_ITEM_IDX + fromIndex;
+	const uint32_t toMenuIndex = FIRST_PROFILE_ITEM_IDX + toIndex;
+	if (fromMenuIndex >= menuItems.Size() || toMenuIndex >= menuItems.Size()) {
+		return;
+	}
+
+	std::vector<IInspectable> reorderedItems(menuItems.Size(), nullptr);
+	menuItems.GetMany(0, reorderedItems);
+	IInspectable movedItem = reorderedItems[fromMenuIndex];
+	reorderedItems.erase(reorderedItems.begin() + fromMenuIndex);
+	reorderedItems.insert(reorderedItems.begin() + toMenuIndex, std::move(movedItem));
+	// NavigationView reacts to every collection notification with an internal layout.
+	// Replace the complete order atomically so it never observes an intermediate list.
+	menuItems.ReplaceAll(reorderedItems);
+
+	com_ptr<ProfileViewModel> movedViewModel =
+		std::move(_profileNavigationViewModels[fromIndex]);
+	_profileNavigationViewModels.erase(_profileNavigationViewModels.begin() + fromIndex);
+	_profileNavigationViewModels.insert(
+		_profileNavigationViewModels.begin() + toIndex,
+		std::move(movedViewModel));
+	_RebindProfileNavigationViewModels();
+
+	if (selectedItem) {
+		nv.SelectedItem(selectedItem);
+		uint32_t selectedIndex = 0;
+		if (menuItems.IndexOf(selectedItem, selectedIndex) &&
+			selectedIndex >= FIRST_PROFILE_ITEM_IDX &&
+			selectedIndex < FIRST_PROFILE_ITEM_IDX + _profileNavigationViewModels.size()) {
+			ContentFrame().Navigate(
+				xaml_typename<ProfilePage>(),
+				box_value(static_cast<int>(selectedIndex - FIRST_PROFILE_ITEM_IDX)));
+		}
+	}
 }
 
 void RootPage::_UpdateNewProfileNameTextBox(bool fillWithTitle) {

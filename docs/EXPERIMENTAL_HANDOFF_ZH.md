@@ -1,6 +1,6 @@
 # Magpie 实验分支交接
 
-更新：2026-08-30
+更新：2026-09-03
 
 这是 [Blinue/Magpie](https://github.com/Blinue/Magpie) 的非官方实验 Fork。主要新增了仅依赖捕获颜色帧的 DLSS-SR、DLSS Frame Generation、FSR2/3/4、XeSS、RTX Video，以及 MLAA/SMAA 时域近似效果。由于没有引擎提供的真实深度、运动向量、曝光、反应遮罩和投影 jitter，画质和稳定性不能等同于原生游戏接入。
 
@@ -9,6 +9,7 @@
 - DLSS SR_Experimental：非 Jitter 主路径默认输入共享 NVOF Motion，可选输入 DAV2 Estimated Depth；旧内部标识继续兼容已有配置。
 - FSR2/FSR3/FSR4/XeSS：Zero-MV、伪 jitter、50% 颜色光流等实验路径。
 - RTX Video：同分辨率降噪和 VSR Low/Medium/High/Ultra。
+- DLSSNR：可选将颜色、运动和深度输入调整到原分辨率的 25%–100%，再把处理差值重建到原分辨率；默认关闭，100% 默认值，1% 步进。
 - DLSS FG_Experimental：2x/3x/4x，默认输入共享 Motion、可选输入 Estimated Depth；不能与 Smooth Motion 同时使用。
 - XeSSFG：通用显卡 x2，以及 Intel Arc 显卡 x2-x4 多帧生成；请求倍率会受 GPU/驱动报告能力限制。
 - Smooth Motion 兼容模式：缩放结束后重启 Magpie，保留窗口/最小化/托盘状态；新进程会等待旧进程完全退出。
@@ -16,7 +17,7 @@
 
 DLSSFG 当前保留 CPU Fence，并通过 D3D11/D3D12 共享资源让最终颜色与源分辨率 Guidance 使用同一捕获帧 ID。失败时依次重置历史、重建一次；仍失败则只在当前缩放会话禁用帧生成并继续显示真实帧，避免无限重试把窗口拖死。
 
-内置更新检查自 0.5.3-experimental 起仍暂时关闭，应用不会后台联网检查，也不显示手动检查入口。当前公开源码版本为 v0.5.7-experimental；Release 使用的社区修改版 `nvngx_dlssnr.dll` 不进入源码仓库。
+内置更新检查自 0.5.3-experimental 起仍暂时关闭，应用不会后台联网检查，也不显示手动检查入口。当前公开常规版本为 v0.6.0-experimental，另有一个已发布的最小 Hotfix；当前 `experimental` 开发线目标版本为 v0.6.1-experimental。Release 使用的社区修改版 `nvngx_dlssnr.dll` 不进入源码仓库。
 
 ## 关键位置
 
@@ -26,6 +27,7 @@ DLSSFG 当前保留 CPU Fence，并通过 D3D11/D3D12 共享资源让最终颜�
 - Effect：`src/Effects/DLSS*`、`FSR*`、`XeSS`、`RTXVideo`、`DLSSFG`、`XeSSFG`
 - 本机开关：`src/BuildOptions.props.user`（不可提交）
 - 可复现打包：`scripts/Build-Release.ps1`
+- 发布规范：`docs/experimental/RELEASE-WORKFLOW.md`
 - 许可证清单：`docs/THIRD_PARTY_AND_REDISTRIBUTION.md`
 
 ## 构建与输出

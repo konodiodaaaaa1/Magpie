@@ -22,6 +22,15 @@
 - 暂停恢复
 - 重复捕获帧
 
+## DLSSNR 时序历史回归
+
+- 冷启动：第一条 Frame Guidance/DLSSNR 帧记录必须为真实捕获的 `frameId=1`；不得在 `frameId=0` 运行 NVOF 或 DLSSNR Evaluate。
+- 切出/切回源窗口：日志应出现 `Frame Guidance history reset: reason=CaptureInterrupted`，恢复后的第一张真实捕获帧不得继承切屏前历史。
+- 捕获停顿：真实捕获间隔达到 500 ms 后，日志应出现 `reason=LongPause`，恢复帧重新建立历史。
+- 重复捕获帧：允许出现 `DLSSNR duplicate capture reused`；同一 `frameId` 只能执行一次 Evaluate，`evaluateCount` 不得因最低帧率强制呈现而领先真实帧数。
+- resize：重新分配 guidance 后必须使用最后一张真实捕获帧重建资源，不得生成无 Color 的伪帧。
+- PotPlayer：分别覆盖“先全屏再缩放”“缩放后切全屏”“暂停/恢复”和快速转场。`Force Zero` 仅用于诊断；运动视频没有有效运动矢量时仍可能产生时序拖影，不作为视频推荐模式。
+
 ## 每组记录
 
 - DLSSNR STATUS：创建路径、Feature 18、Evaluate result/计数、disabled 状态。

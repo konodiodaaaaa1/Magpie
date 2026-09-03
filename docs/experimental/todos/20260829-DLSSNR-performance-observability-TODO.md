@@ -74,6 +74,17 @@
 
 实现记录（2026-08-29）：旧路径的问题不在 Guidance，而在 Signed Snippet 合同不完整：错误 AppID、错误数据目录、没有调用方 IAT 兼容，并且把 Core Feature 18 当作前置探测。本阶段已按已验证实现重建生命周期。NVIDIA Indicator 仍只作旁证；`DLSSNR STATUS` 是主要验收信号。
 
+## P2.2：DLSSNR 时序历史生命周期修复
+
+- [x] Frame Guidance 初始化阶段只分配资源，不再用捕获启动前内容未定义的输出纹理制造 `frameId=0`；第一张真实捕获帧负责建立 NVOF 历史并传播 Initialize reset。
+- [x] resize 后使用最后一张真实捕获帧重新产出 guidance，不再构造无 Color 的伪帧。
+- [x] 源窗口失焦/回焦、WGC 捕获重启和至少 500 ms 的真实捕获停顿会调用 `ResetHistory`，使下一张真实帧重建 NVOF/DLSSNR 历史。
+- [x] DLSSNR 对相同 `frameId` 复用已有输出，最低帧率强制呈现不再重复执行 Evaluate 或推进时序状态。
+- [x] Release x64 全解决方案构建通过。
+- [ ] 在目标 NVIDIA GPU 上完成 PotPlayer 全屏启动、切出/切回、暂停/恢复和游戏切屏回归；核对 reset/reuse 日志与主观画质。
+
+实现记录（2026-09-03）：旧日志中的 `evaluateCount > frameId` 及首帧 NVOF 历史污染已有代码级修复。`Force Zero` 是无运动矢量的诊断模式，运动视频仍可能表现出 DLSSNR 自身的时序拖影；视频回归以 Available/Motion Only 为主，同时保留 Force Zero 作为隔离对照。
+
 ## P3：DAV2 短期降载
 
 - [x] DLSSNR 增加 `Depth Inference Interval`，默认每 4 个真实帧推理一次，可设 1–8。

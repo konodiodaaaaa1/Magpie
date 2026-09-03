@@ -13,6 +13,185 @@
 
 namespace Magpie {
 
+namespace {
+
+struct DisplayTargetInfo {
+	std::wstring gdiDeviceName;
+	std::wstring deviceId;
+	std::wstring friendlyName;
+};
+
+std::vector<DisplayTargetInfo> GetActiveDisplayTargets() noexcept {
+	std::vector<DisplayTargetInfo> result;
+
+	for (int attempt = 0; attempt < 3; ++attempt) {
+		UINT32 pathCount = 0;
+		UINT32 modeCount = 0;
+		LONG status = GetDisplayConfigBufferSizes(
+			QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
+		if (status != ERROR_SUCCESS) {
+			Logger::Get().Warn(fmt::format(
+				"GetDisplayConfigBufferSizes 失败\n\t错误码: {}", status));
+			return result;
+		}
+
+		std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+		std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+		status = QueryDisplayConfig(
+			QDC_ONLY_ACTIVE_PATHS,
+			&pathCount,
+			paths.data(),
+			&modeCount,
+			modes.data(),
+			nullptr);
+		if (status == ERROR_INSUFFICIENT_BUFFER) {
+			continue;
+		}
+		if (status != ERROR_SUCCESS) {
+			Logger::Get().Warn(fmt::format(
+				"QueryDisplayConfig 失败\n\t错误码: {}", status));
+			return result;
+		}
+
+		paths.resize(pathCount);
+		result.reserve(pathCount);
+		for (const DISPLAYCONFIG_PATH_INFO& path : paths) {
+			DISPLAYCONFIG_SOURCE_DEVICE_NAME sourceName{};
+			sourceName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+			sourceName.header.size = sizeof(sourceName);
+			sourceName.header.adapterId = path.sourceInfo.adapterId;
+			sourceName.header.id = path.sourceInfo.id;
+			if (DisplayConfigGetDeviceInfo(&sourceName.header) != ERROR_SUCCESS) {
+				continue;
+			}
+
+			DISPLAYCONFIG_TARGET_DEVICE_NAME targetName{};
+			targetName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+			targetName.header.size = sizeof(targetName);
+			targetName.header.adapterId = path.targetInfo.adapterId;
+			targetName.header.id = path.targetInfo.id;
+			if (DisplayConfigGetDeviceInfo(&targetName.header) != ERROR_SUCCESS) {
+				continue;
+			}
+
+			DisplayTargetInfo& target = result.emplace_back();
+			target.gdiDeviceName = sourceName.viewGdiDeviceName;
+			target.deviceId = targetName.monitorDevicePath;
+			target.friendlyName = targetName.monitorFriendlyDeviceName;
+		}
+
+		return result;
+	}
+
+	Logger::Get().Warn("显示配置在枚举期间持续变化");
+	return result;
+}
+
+bool EqualDeviceName(std::wstring_view left, std::wstring_view right) noexcept {
+	return CompareStringOrdinal(
+		left.data(), (int)left.size(),
+		right.data(), (int)right.size(), TRUE) == CSTR_EQUAL;
+}
+
+}
+
+std::vector<Win32Helper::DisplayMonitorInfo> Win32Helper::GetDisplayMonitors() noexcept {
+	std::vector<DisplayMonitorInfo> result;
+	const std::vector<DisplayTargetInfo> activeTargets = GetActiveDisplayTargets();
+
+	struct EnumContext {
+		std::vector<DisplayMonitorInfo>& monitors;
+		const std::vector<DisplayTargetInfo>& targets;
+	} context{ result, activeTargets };
+
+	const MONITORENUMPROC enumProc = [](HMONITOR hMonitor, HDC, LPRECT, LPARAM data) -> BOOL {
+		auto& context = *reinterpret_cast<EnumContext*>(data);
+
+		MONITORINFOEXW monitorInfo{};
+		monitorInfo.cbSize = sizeof(monitorInfo);
+		if (!GetMonitorInfoW(hMonitor, &monitorInfo)) {
+			Logger::Get().Win32Warn("GetMonitorInfoW 失败");
+			return TRUE;
+		}
+
+		DisplayMonitorInfo info;
+		info.handle = hMonitor;
+		info.rect = monitorInfo.rcMonitor;
+		info.gdiDeviceName = monitorInfo.szDevice;
+		info.isPrimary = (monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
+
+		// EnumDisplayDevices 返回的 DeviceString 经常只是“通用即插即用显示器”。
+		// 使用活动显示路径将 GDI 显示源映射到来自 EDID 的物理型号和稳定设备路径。
+		for (const DisplayTargetInfo& target : context.targets) {
+			if (EqualDeviceName(target.gdiDeviceName, info.gdiDeviceName)) {
+				info.deviceId = target.deviceId;
+				info.friendlyName = target.friendlyName;
+				break;
+			}
+		}
+
+		// 旧系统或显示驱动未提供 DisplayConfig 信息时保留原有回退逻辑。
+		std::wstring fallbackId;
+		std::wstring fallbackName;
+		for (DWORD index = 0;; ++index) {
+			DISPLAY_DEVICEW device{};
+			device.cb = sizeof(device);
+			if (!EnumDisplayDevicesW(
+				monitorInfo.szDevice,
+				index,
+				&device,
+				EDD_GET_DEVICE_INTERFACE_NAME)) {
+				break;
+			}
+
+			if (fallbackId.empty()) {
+				fallbackId = device.DeviceID;
+				fallbackName = device.DeviceString;
+			}
+			if ((device.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0) {
+				fallbackId = device.DeviceID;
+				fallbackName = device.DeviceString;
+				break;
+			}
+		}
+
+		if (info.deviceId.empty()) {
+			info.deviceId = std::move(fallbackId);
+		}
+		if (info.friendlyName.empty()) {
+			info.friendlyName = std::move(fallbackName);
+		}
+		if (info.deviceId.empty()) {
+			info.deviceId = info.gdiDeviceName;
+		}
+		if (info.friendlyName.empty()) {
+			info.friendlyName = info.gdiDeviceName;
+		}
+
+		context.monitors.emplace_back(std::move(info));
+		return TRUE;
+	};
+
+	if (!EnumDisplayMonitors(nullptr, nullptr, enumProc, reinterpret_cast<LPARAM>(&context))) {
+		Logger::Get().Win32Error("EnumDisplayMonitors 失败");
+		result.clear();
+		return result;
+	}
+
+	std::sort(result.begin(), result.end(), [](const DisplayMonitorInfo& left,
+		const DisplayMonitorInfo& right) {
+		if (left.isPrimary != right.isPrimary) {
+			return left.isPrimary;
+		}
+		if (left.rect.top != right.rect.top) {
+			return left.rect.top < right.rect.top;
+		}
+		return left.rect.left < right.rect.left;
+	});
+
+	return result;
+}
+
 std::wstring Win32Helper::GetWindowClassName(HWND hWnd) noexcept {
 	// 窗口类名最多 256 个字符
 	std::wstring className(256, 0);
