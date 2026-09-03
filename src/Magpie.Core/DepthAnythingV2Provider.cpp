@@ -41,16 +41,15 @@ RWTexture2DArray<float> ModelInput : register(u0);
 cbuffer Params : register(b0) {
     uint2 SourceExtent;
     uint2 InferenceExtent;
-    uint SourceIsBgra;
-    uint3 Padding;
+    uint4 Padding;
 };
 
 [numthreads(8, 8, 1)]
 void Preprocess(uint3 tid : SV_DispatchThreadID) {
     if (any(tid.xy >= InferenceExtent)) return;
     float2 uv = (float2(tid.xy) + 0.5) / float2(InferenceExtent);
-    float3 stored = Color.SampleLevel(LinearClamp, uv, 0).rgb;
-    float3 rgb = SourceIsBgra != 0 ? stored.zyx : stored;
+    // A typed BGRA SRV already returns logical RGBA components.
+    float3 rgb = Color.SampleLevel(LinearClamp, uv, 0).rgb;
     static const float3 mean = float3(0.485, 0.456, 0.406);
     static const float3 deviation = float3(0.229, 0.224, 0.225);
     float3 normalized = (rgb - mean) / deviation;
@@ -647,13 +646,12 @@ struct DepthAnythingV2Provider::Impl {
 			BackendInitializationResult::Failed;
 	}
 
-	bool EnsurePreprocessSource(ID3D11Texture2D* color, bool& sourceIsBgra) noexcept {
+	bool EnsurePreprocessSource(ID3D11Texture2D* color) noexcept {
 		D3D11_TEXTURE2D_DESC desc{};
 		color->GetDesc(&desc);
 		if (desc.Width != extent.width || desc.Height != extent.height ||
 			(desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
 				desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
-		sourceIsBgra = desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
 		if (preprocessSource.get() == color && preprocessSourceSrv) return true;
 		preprocessSource.copy_from(color);
 		preprocessSourceSrv = nullptr;
@@ -670,8 +668,7 @@ struct DepthAnythingV2Provider::Impl {
 			}
 		}
 		if (!slot) return false;
-		bool sourceIsBgra = false;
-		if (!EnsurePreprocessSource(frame.color, sourceIsBgra)) return false;
+		if (!EnsurePreprocessSource(frame.color)) return false;
 		D3D11_MAPPED_SUBRESOURCE mapped{};
 		if (FAILED(context->Map(
 			preprocessParams.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
@@ -679,11 +676,11 @@ struct DepthAnythingV2Provider::Impl {
 		}
 		struct Params {
 			uint32_t sourceWidth, sourceHeight, inferenceWidth, inferenceHeight;
-			uint32_t sourceIsBgra, padding0, padding1, padding2;
+			uint32_t padding0, padding1, padding2, padding3;
 		};
 		*static_cast<Params*>(mapped.pData) = {
 			extent.width, extent.height, inferenceWidth, inferenceHeight,
-			sourceIsBgra ? 1u : 0u, 0, 0, 0
+			0, 0, 0, 0
 		};
 		context->Unmap(preprocessParams.get(), 0);
 		ID3D11ShaderResourceView* srv = preprocessSourceSrv.get();

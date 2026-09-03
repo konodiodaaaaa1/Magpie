@@ -104,9 +104,9 @@ RWTexture2D<float4> OutputColor : register(u0);
 cbuffer ResampleParams : register(b0) {
     uint2 SourceExtent;
     uint2 TargetExtent;
-    uint SourceIsBgra;
+    uint Padding0;
     float2 MotionScale;
-    uint Padding;
+    uint Padding1;
 };
 
 [numthreads(8, 8, 1)]
@@ -131,7 +131,7 @@ void DownsampleColor(uint3 tid : SV_DispatchThreadID) {
             float weight = weightX * weightY;
             float4 stored = InputColor.Load(int3(
                 clamp(int2(x, y), int2(0, 0), int2(SourceExtent) - 1), 0));
-            if (SourceIsBgra != 0) stored.rgb = stored.bgr;
+            // A typed BGRA SRV already returns logical RGBA components.
             total += stored * weight;
             totalWeight += weight;
         }
@@ -151,9 +151,9 @@ RWTexture2D<float> OutputConfidence : register(u2);
 cbuffer ResampleParams : register(b0) {
     uint2 SourceExtent;
     uint2 TargetExtent;
-    uint SourceIsBgra;
+    uint Padding0;
     float2 MotionScale;
-    uint Padding;
+    uint Padding1;
 };
 
 [numthreads(8, 8, 1)]
@@ -210,9 +210,9 @@ RWTexture2D<float4> HorizontalResidual : register(u0);
 cbuffer ResampleParams : register(b0) {
     uint2 SourceExtent;
     uint2 TargetExtent;
-    uint SourceIsBgra;
+    uint Padding0;
     float2 MotionScale;
-    uint Padding;
+    uint Padding1;
 };
 
 static const float PI = 3.14159265358979323846;
@@ -261,9 +261,9 @@ RWTexture2D<float4> OutputColor : register(u0);
 cbuffer ResampleParams : register(b0) {
     uint2 SourceExtent;
     uint2 TargetExtent;
-    uint SourceIsBgra;
+    uint Padding0;
     float2 MotionScale;
-    uint Padding;
+    uint Padding1;
 };
 
 static const float PI = 3.14159265358979323846;
@@ -280,8 +280,8 @@ float Lanczos3(float value) {
 void CompositeResidualVertical(uint3 tid : SV_DispatchThreadID) {
     if (any(tid.xy >= SourceExtent)) return;
     float4 storedOriginal = OriginalColor.Load(int3(tid.xy, 0));
-    float3 original = SourceIsBgra != 0 ?
-        storedOriginal.bgr : storedOriginal.rgb;
+    // A typed BGRA SRV already returns logical RGBA components.
+    float3 original = storedOriginal.rgb;
     if (SourceExtent.y == TargetExtent.y) {
         float3 residual = HorizontalResidual.Load(int3(tid.xy, 0)).rgb;
         OutputColor[tid.xy] = float4(
@@ -312,10 +312,10 @@ struct ResampleConstants {
 	uint32_t sourceHeight = 0;
 	uint32_t targetWidth = 0;
 	uint32_t targetHeight = 0;
-	uint32_t sourceIsBgra = 0;
+	uint32_t padding0 = 0;
 	float motionScaleX = 1.0f;
 	float motionScaleY = 1.0f;
-	uint32_t padding = 0;
+	uint32_t padding1 = 0;
 };
 static_assert(sizeof(ResampleConstants) == 32);
 
@@ -1253,7 +1253,6 @@ static bool PrepareInput(
 			.sourceHeight = impl.sourceHeight,
 			.targetWidth = impl.width,
 			.targetHeight = impl.height,
-			.sourceIsBgra = impl.convertInputToRgba ? 1u : 0u,
 			.motionScaleX = float(impl.width) / float(impl.sourceWidth),
 			.motionScaleY = float(impl.height) / float(impl.sourceHeight)
 		};
@@ -1345,7 +1344,6 @@ static bool PrepareReducedGuidance(
 		.sourceHeight = impl.sourceHeight,
 		.targetWidth = impl.width,
 		.targetHeight = impl.height,
-		.sourceIsBgra = impl.convertInputToRgba ? 1u : 0u,
 		.motionScaleX = float(impl.width) / float(impl.sourceWidth),
 		.motionScaleY = float(impl.height) / float(impl.sourceHeight)
 	};
@@ -1456,7 +1454,6 @@ static bool CompositeResidual(
 		.sourceHeight = impl.sourceHeight,
 		.targetWidth = impl.width,
 		.targetHeight = impl.height,
-		.sourceIsBgra = impl.convertInputToRgba ? 1u : 0u,
 		.motionScaleX = float(impl.width) / float(impl.sourceWidth),
 		.motionScaleY = float(impl.height) / float(impl.sourceHeight)
 	};
@@ -1781,12 +1778,13 @@ bool DLSSNRFilter::Initialize(
 	}
 
 	LogDlssnrStatus(fmt::format(
-		"DLSSNR STATUS: Feature=18 created=true path={} sourceSize={}x{} "
+		"DLSSNR STATUS: Feature=18 created=true path={} sourceSize={}x{} sourceFormat={} "
 		"inputSize={}x{} inputResolutionScaling={} inputResolutionPercent={} preset={} "
 		"style={} intensity={} localTone={} localStructure={} skinStructure={} "
 		"guidanceMode={} autoMask={} uiCorrection={} depthInterval={} disabled=false",
 		ENABLE_CORE_FEATURE18_DIAGNOSTIC ? "core-diagnostic" : "signed-snippet",
-		impl->sourceWidth, impl->sourceHeight, impl->width, impl->height,
+		impl->sourceWidth, impl->sourceHeight, static_cast<uint32_t>(inputDesc.Format),
+		impl->width, impl->height,
 		impl->useResolutionScaling, _settings.inputResolutionPercent,
 		_settings.preset, _settings.style,
 		_settings.intensity, _settings.localToneStrength,
