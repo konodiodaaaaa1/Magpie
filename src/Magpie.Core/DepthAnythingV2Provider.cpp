@@ -581,11 +581,13 @@ struct DepthAnythingV2Provider::Impl {
 			providerDirectory / L"TensorRT" / L"nvinfer_10.dll");
 		const std::string cudaRuntimeVersion = FileVersionKey(
 			FindModulePath(L"cudart64_12.dll"));
+		// Keep the cache path short enough for TensorRT's generated engine and
+		// timing-cache filenames to remain below the Windows path limit.
 		const std::filesystem::path cacheKey = fmt::format(
-			"{}_ort1.24.4_trt{}_cudart{}_driver{}_sm{}{}_fp16_int8off_opt3_{}x{}_cuda{}",
-			MODEL_SHA256, tensorRTVersion, cudaRuntimeVersion,
-			cuda.driverVersion, cuda.computeMajor, cuda.computeMinor,
-			inferenceWidth, inferenceHeight, cuda.deviceIndex);
+			"dav2_{}_{}x{}_sm{}{}_cuda{}_trt{}",
+			std::string_view(MODEL_SHA256, 12), inferenceWidth, inferenceHeight,
+			cuda.computeMajor, cuda.computeMinor, cuda.deviceIndex,
+			tensorRTVersion);
 		const std::filesystem::path cacheDirectory =
 			LocalAppDataPath() / L"Magpie" / L"FrameGuidance" /
 			L"TensorRTCache" / cacheKey;

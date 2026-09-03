@@ -1779,7 +1779,9 @@ uint32_t EffectCompiler::Compile(
 	{
 		auto& inputDesc = desc.textures.emplace_back();
 		inputDesc.name = "INPUT";
-		inputDesc.format = EffectIntermediateTextureFormat::R8G8B8A8_UNORM;
+		inputDesc.format = flags & EffectCompilerFlags::ForceFP16Default
+			? EffectIntermediateTextureFormat::R16G16B16A16_FLOAT
+			: EffectIntermediateTextureFormat::R8G8B8A8_UNORM;
 		inputDesc.sizeExpr.first = "INPUT_WIDTH";
 		inputDesc.sizeExpr.second = "INPUT_HEIGHT";
 	}
@@ -1787,7 +1789,9 @@ uint32_t EffectCompiler::Compile(
 	{
 		auto& outputDesc = desc.textures.emplace_back();
 		outputDesc.name = "OUTPUT";
-		outputDesc.format = EffectIntermediateTextureFormat::R8G8B8A8_UNORM;
+		outputDesc.format = flags & EffectCompilerFlags::ForceFP16Default
+			? EffectIntermediateTextureFormat::R16G16B16A16_FLOAT
+			: EffectIntermediateTextureFormat::R8G8B8A8_UNORM;
 	}
 
 	for (size_t i = 0; i < textureBlocks.size(); ++i) {
@@ -1795,6 +1799,12 @@ uint32_t EffectCompiler::Compile(
 			Logger::Get().Error(fmt::format("解析 Texture#{} 块失败", i + 1));
 			return 1;
 		}
+	}
+	if (flags & EffectCompilerFlags::ForceFP16Default) {
+		// HDR sessions use an FP16 sRGB-range chain. Keep auxiliary textures at
+		// their declared formats while normalizing the public endpoints.
+		desc.textures[0].format = EffectIntermediateTextureFormat::R16G16B16A16_FLOAT;
+		desc.textures[1].format = EffectIntermediateTextureFormat::R16G16B16A16_FLOAT;
 	}
 
 	if (!noCompile) {

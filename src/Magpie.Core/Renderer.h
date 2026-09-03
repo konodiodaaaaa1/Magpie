@@ -234,6 +234,8 @@ private:
 	winrt::Windows::System::DispatcherQueue _backendThreadDispatcher{ nullptr };
 	ScalingError _backendInitError = ScalingError::NoError;
 	std::vector<EffectDesc> _effectDescs;
+	// HDR sessions wrap the user effect chain with FP16 sRGB adapters.
+	std::vector<EffectOption> _runtimeEffects;
 	// 包含追加的 Bicubic
 	std::vector<const EffectDesc*> _activeEffectDescs;
 };

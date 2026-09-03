@@ -4,9 +4,6 @@
       "name": "HDR DLSS5 Bridge",
       "effects": [
         {
-          "name": "HDRToSDR"
-        },
-        {
           "name": "FrameRate_Filter",
           "parameters": {
             "targetFrameRate": 60
@@ -26,9 +23,6 @@
             "guidanceMode": 0,
             "depthInferenceInterval": 4
           }
-        },
-        {
-          "name": "SDRToHDR"
         }
       ]
     }

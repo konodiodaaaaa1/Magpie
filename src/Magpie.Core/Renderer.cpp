@@ -785,7 +785,8 @@ bool Renderer::_InitFrameSource() noexcept {
 static std::optional<EffectDesc> CompileEffect(
 	const EffectOption& effectOption,
 	bool noFP16,
-	bool forceInlineParams = false
+	bool forceInlineParams = false,
+	bool forceFP16Default = false
 ) noexcept {
 	// 指定效果名
 	EffectDesc result{ .name = effectOption.name };
@@ -807,6 +808,9 @@ static std::optional<EffectDesc> CompileEffect(
 	if (noFP16) {
 		compileFlag |= EffectCompilerFlags::NoFP16;
 	}
+	if (forceFP16Default) {
+		compileFlag |= EffectCompilerFlags::ForceFP16Default;
+	}
 
 	bool success = true;
 	uint32_t duration = Measure([&]() {
@@ -827,8 +831,18 @@ static std::optional<EffectDesc> CompileEffect(
 ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	const ScalingOptions& options = ScalingWindow::Get().Options();
 	const bool noFP16 = !_backendResources.IsFP16Supported() || options.IsFP16Disabled();
-
-	const std::vector<EffectOption>& effects = options.effects;
+	const bool hdrBridge = options.captureMethod == CaptureMethod::GraphicsCaptureHDR;
+	_runtimeEffects.clear();
+	_runtimeEffects.reserve(options.effects.size() + (hdrBridge ? 2 : 0));
+	if (hdrBridge && !noFP16) {
+		_runtimeEffects.push_back({ .name = "HDRToSDR_FP16" });
+	}
+	_runtimeEffects.insert(
+		_runtimeEffects.end(), options.effects.begin(), options.effects.end());
+	if (hdrBridge && !noFP16) {
+		_runtimeEffects.push_back({ .name = "SDRToHDR_FP16" });
+	}
+	const std::vector<EffectOption>& effects = _runtimeEffects;
 	assert(!effects.empty());
 	const uint32_t effectCount = (uint32_t)effects.size();
 
@@ -839,7 +853,11 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	
 	int duration = Measure([&]() {
 		Win32Helper::RunParallel([&](uint32_t id) {
-			std::optional<EffectDesc> desc = CompileEffect(effects[id], noFP16);
+			const bool forceFP16Default = hdrBridge &&
+				effects[id].name != "HDRToSDR_FP16" &&
+				effects[id].name != "SDRToHDR_FP16";
+			std::optional<EffectDesc> desc = CompileEffect(
+				effects[id], noFP16, false, forceFP16Default);
 
 			auto lk = writeLock.lock_exclusive();
 			if (desc) {
@@ -1033,7 +1051,7 @@ bool Renderer::_AppendBicubic(ID3D11Texture2D** inOutTexture) noexcept {
 
 ID3D11Texture2D* Renderer::_ResizeEffects() noexcept {
 	const ScalingOptions& options = ScalingWindow::Get().Options();
-	const std::vector<EffectOption>& effects = options.effects;
+	const std::vector<EffectOption>& effects = _runtimeEffects;
 	assert(!effects.empty());
 	const uint32_t effectCount = (uint32_t)effects.size();
 	if (!_DrainNgxConsumers()) {
