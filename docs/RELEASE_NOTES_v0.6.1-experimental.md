@@ -12,9 +12,9 @@
 
 ### 效果器更新
 
-- 修正 DLSSNR / Frame Guidance 的时序历史管理：第一张真实捕获帧用于建立历史；切换窗口、捕获恢复或画面停顿后会重置历史；重复呈现同一帧时复用已有结果，减少错误的时序累积。
-- 修复 DLSSNR 输入分辨率缩放时可能出现的红蓝通道反转，并同步修正 Depth Anything V2 的 BGRA 输入预处理。
 - DLSSNR 新增 `Residual Multiplier`。它只在启用输入分辨率调整后显示和生效，范围为 `1.00`–`2.00`，默认值为 `1.00`，步进为 `0.05`。提高数值会增强回填到原始分辨率的降噪残差，但也可能放大伪影或过度处理。
+- 优化 DLSSNR / Frame Guidance 的时序历史管理。
+- 修复 DLSSNR 输入分辨率缩放时可能出现的红蓝通道反转。
 
 ## 应该下载哪个文件？
 
@@ -77,9 +77,9 @@ RTX 40 系用户，以及希望进一步降低深度推理开销的 RTX 50 系�
 
 ### Effect Updates
 
-- Corrected DLSSNR / Frame Guidance temporal-history management. The first real captured frame seeds history; switching windows, capture recovery, or a pause in captured frames resets history; repeated presentation of the same frame reuses the existing result instead of accumulating it again.
-- Fixed possible red/blue channel inversion when using DLSSNR input-resolution scaling, together with the corresponding BGRA preprocessing in Depth Anything V2.
 - Added `Residual Multiplier` to DLSSNR. It is visible and effective only when input-resolution adjustment is enabled. Its range is `1.00`–`2.00`, the default is `1.00`, and the step is `0.05`. Higher values strengthen the denoising residual reconstructed at the original resolution, but may also amplify artifacts or over-processing.
+- Improved DLSSNR / Frame Guidance temporal-history management.
+- Fixed possible red/blue channel inversion when using DLSSNR input-resolution scaling.
 
 ## Which File Should I Download?
 
