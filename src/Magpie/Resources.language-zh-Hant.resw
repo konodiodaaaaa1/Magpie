@@ -721,6 +721,12 @@
   <data name="Home_Advanced_AutoHDRBridge.Description" xml:space="preserve">
     <value>HDR 擷取時自動將效果鏈轉換為 FP16 sRGB 範圍，輸出前恢復 HDR</value>
   </data>
+  <data name="Home_Advanced_HdrSdrWhitePoint.Header" xml:space="preserve">
+    <value>HDR 橋接 SDR 白點</value>
+  </data>
+  <data name="Home_Advanced_HdrSdrWhitePoint.Description" xml:space="preserve">
+    <value>以 scRGB 白點倍數調整 SDR 亮度映射，預設 4.5</value>
+  </data>
   <data name="Profile_Performance_FrameRateLimiter.Header" xml:space="preserve">
     <value>幀率限制</value>
   </data>

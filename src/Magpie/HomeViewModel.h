@@ -114,6 +114,9 @@ struct HomeViewModel : HomeViewModelT<HomeViewModel>, wil::notify_property_chang
 	bool IsAutoHDRBridgeEnabled() const noexcept;
 	void IsAutoHDRBridgeEnabled(bool value);
 
+	double HdrSdrWhitePoint() const noexcept;
+	void HdrSdrWhitePoint(double value);
+
 	int DuplicateFrameDetectionMode() const noexcept;
 	void DuplicateFrameDetectionMode(int value);
 

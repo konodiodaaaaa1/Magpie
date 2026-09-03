@@ -204,6 +204,7 @@ struct ScalingOptions {
 	std::optional<float> maxFrameRate;
 	float cursorScaling = 1.0f;
 	CaptureMethod captureMethod = CaptureMethod::GraphicsCapture;
+	float hdrSdrWhitePoint = 4.5f;
 	MultiMonitorUsage multiMonitorUsage = MultiMonitorUsage::Closest;
 	std::wstring preferredMonitorId;
 	DestAlignment destAlignment = DestAlignment::Center;

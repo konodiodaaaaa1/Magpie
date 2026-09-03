@@ -2,6 +2,14 @@
 //!VERSION 4
 //!SORT_NAME SDR To HDR (HDR Capture Bridge)
 
+//!PARAMETER
+//!LABEL SDR White Point (scRGB)
+//!DEFAULT 4.5
+//!MIN 1
+//!MAX 10
+//!STEP 0.1
+float sdrWhiteScale;
+
 //!TEXTURE
 //!FORMAT R8G8B8A8_UNORM
 Texture2D INPUT;
@@ -24,7 +32,6 @@ float Linear(float x) {
 }
 
 float4 Pass1(float2 pos) {
-	const float sdrWhiteScale = 4.5;
 	float4 c = INPUT.SampleLevel(sam, pos, 0);
 	return float4(Linear(c.r), Linear(c.g), Linear(c.b), 1.0) * sdrWhiteScale;
 }

@@ -2,6 +2,14 @@
 //!VERSION 4
 //!SORT_NAME HDR To sRGB FP16
 
+//!PARAMETER
+//!LABEL SDR White Point (scRGB)
+//!DEFAULT 4.5
+//!MIN 1
+//!MAX 10
+//!STEP 0.1
+float sdrWhiteScale;
+
 //!TEXTURE
 //!FORMAT R16G16B16A16_FLOAT
 Texture2D INPUT;
@@ -24,7 +32,6 @@ float Srgb(float x) {
 }
 
 float4 Pass1(float2 pos) {
-	const float sdrWhiteScale = 4.5;
 	float4 c = INPUT.SampleLevel(sam, pos, 0) / sdrWhiteScale;
 	return float4(Srgb(max(c.r, 0.0)), Srgb(max(c.g, 0.0)), Srgb(max(c.b, 0.0)), 1.0);
 }

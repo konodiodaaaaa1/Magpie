@@ -82,6 +82,7 @@ struct _AppSettingsData {
 	bool _isStatisticsForDynamicDetectionEnabled = false;
 	bool _isFP16Disabled = false;
 	bool _isAutoHDRBridgeEnabled = true;
+	float _hdrSdrWhitePoint = 4.5f;
 };
 
 class AppSettings : private _AppSettingsData {
@@ -228,6 +229,15 @@ public:
 
 	void IsAutoHDRBridgeEnabled(bool value) noexcept {
 		_isAutoHDRBridgeEnabled = value;
+		SaveAsync();
+	}
+
+	float HdrSdrWhitePoint() const noexcept {
+		return _hdrSdrWhitePoint;
+	}
+
+	void HdrSdrWhitePoint(float value) noexcept {
+		_hdrSdrWhitePoint = std::clamp(value, 1.0f, 10.0f);
 		SaveAsync();
 	}
 

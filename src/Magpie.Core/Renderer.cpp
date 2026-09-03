@@ -837,8 +837,10 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	_runtimeEffects.clear();
 	_runtimeEffects.reserve(options.effects.size() + (hdrBridge ? 2 : 0));
 	if (hdrBridge) {
-		_runtimeEffects.push_back({ .name = useFp16HdrBridge
-			? "HDRToSDR_FP16" : "HDRToSDR" });
+		_runtimeEffects.push_back({
+			.name = useFp16HdrBridge ? "HDRToSDR_FP16" : "HDRToSDR",
+			.parameters{{"sdrWhiteScale", options.hdrSdrWhitePoint}}
+		});
 	}
 	for (const EffectOption& effect : options.effects) {
 		if (hdrBridge && (effect.name == "HDRToSDR" ||
@@ -849,8 +851,10 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 		_runtimeEffects.push_back(effect);
 	}
 	if (hdrBridge) {
-		_runtimeEffects.push_back({ .name = useFp16HdrBridge
-			? "SDRToHDR_FP16" : "SDRToHDR" });
+		_runtimeEffects.push_back({
+			.name = useFp16HdrBridge ? "SDRToHDR_FP16" : "SDRToHDR",
+			.parameters{{"sdrWhiteScale", options.hdrSdrWhitePoint}}
+		});
 	}
 	const std::vector<EffectOption>& effects = _runtimeEffects;
 	assert(!effects.empty());

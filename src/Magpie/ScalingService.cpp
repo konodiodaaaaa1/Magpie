@@ -471,6 +471,7 @@ ScalingError ScalingService::_StartScaleImpl(HWND hWnd, const Profile& profile, 
 	options.IsInlineParams(settings.IsInlineParams());
 	options.IsFP16Disabled(settings.IsFP16Disabled());
 	options.IsAutoHDRBridgeEnabled(settings.IsAutoHDRBridgeEnabled());
+	options.hdrSdrWhitePoint = settings.HdrSdrWhitePoint();
 
 	if (options.maxFrameRate) {
 		// 最小帧数不能大于最大帧数

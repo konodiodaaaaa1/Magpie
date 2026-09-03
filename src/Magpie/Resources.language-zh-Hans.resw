@@ -736,6 +736,12 @@
   <data name="Home_Advanced_AutoHDRBridge.Description" xml:space="preserve">
     <value>HDR 捕获时自动将效果链转换为 FP16 sRGB 范围并在输出前恢复 HDR</value>
   </data>
+  <data name="Home_Advanced_HdrSdrWhitePoint.Header" xml:space="preserve">
+    <value>HDR 桥接 SDR 白点</value>
+  </data>
+  <data name="Home_Advanced_HdrSdrWhitePoint.Description" xml:space="preserve">
+    <value>以 scRGB 白点倍数调节 SDR 亮度映射，默认 4.5</value>
+  </data>
   <data name="Dialog_JsonFile" xml:space="preserve">
     <value>JSON 文件</value>
   </data>

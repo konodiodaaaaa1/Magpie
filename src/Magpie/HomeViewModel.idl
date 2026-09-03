@@ -49,6 +49,7 @@ namespace Magpie {
 		Boolean IsWarningsAreErrors;
 		Boolean IsFP16Disabled;
 		Boolean IsAutoHDRBridgeEnabled;
+		Double HdrSdrWhitePoint;
 		Int32 DuplicateFrameDetectionMode;
 		Boolean IsDynamicDection { get; };
 		Boolean IsStatisticsForDynamicDetectionEnabled;

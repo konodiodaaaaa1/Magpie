@@ -583,6 +583,19 @@ void HomeViewModel::IsAutoHDRBridgeEnabled(bool value) {
 	RaisePropertyChanged(L"IsAutoHDRBridgeEnabled");
 }
 
+double HomeViewModel::HdrSdrWhitePoint() const noexcept {
+	return AppSettings::Get().HdrSdrWhitePoint();
+}
+
+void HomeViewModel::HdrSdrWhitePoint(double value) {
+	const float clamped = std::clamp(static_cast<float>(value), 1.0f, 10.0f);
+	if (AppSettings::Get().HdrSdrWhitePoint() == clamped) {
+		return;
+	}
+	AppSettings::Get().HdrSdrWhitePoint(clamped);
+	RaisePropertyChanged(L"HdrSdrWhitePoint");
+}
+
 int HomeViewModel::DuplicateFrameDetectionMode() const noexcept {
 	return (int)AppSettings::Get().DuplicateFrameDetectionMode();
 }

@@ -247,6 +247,18 @@
 					<ToggleSwitch x:Uid="ToggleSwitch"
 					              IsOn="{x:Bind ViewModel.IsAutoHDRBridgeEnabled, Mode=TwoWay}" />
 				</local:SettingsCard>
+				<local:SettingsCard x:Uid="Home_Advanced_HdrSdrWhitePoint"
+				                    IsWrapEnabled="True">
+					<local:SettingsCard.HeaderIcon>
+						<FontIcon Glyph="&#xE950;" />
+					</local:SettingsCard.HeaderIcon>
+					<muxc:NumberBox Minimum="1"
+					                Maximum="10"
+					                SmallChange="0.1"
+					                LargeChange="1"
+					                SpinButtonPlacementMode="Compact"
+					                Value="{x:Bind ViewModel.HdrSdrWhitePoint, Mode=TwoWay}" />
+				</local:SettingsCard>
 				<local:SettingsCard x:Uid="Home_Advanced_MinFrameRate"
 				                    IsWrapEnabled="True">
 					<local:SettingsCard.HeaderIcon>
