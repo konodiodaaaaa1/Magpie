@@ -832,15 +832,24 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	const ScalingOptions& options = ScalingWindow::Get().Options();
 	const bool noFP16 = !_backendResources.IsFP16Supported() || options.IsFP16Disabled();
 	const bool hdrBridge = options.captureMethod == CaptureMethod::GraphicsCaptureHDR;
+	const bool useFp16HdrBridge = hdrBridge && !noFP16;
 	_runtimeEffects.clear();
 	_runtimeEffects.reserve(options.effects.size() + (hdrBridge ? 2 : 0));
-	if (hdrBridge && !noFP16) {
-		_runtimeEffects.push_back({ .name = "HDRToSDR_FP16" });
+	if (hdrBridge) {
+		_runtimeEffects.push_back({ .name = useFp16HdrBridge
+			? "HDRToSDR_FP16" : "HDRToSDR" });
 	}
-	_runtimeEffects.insert(
-		_runtimeEffects.end(), options.effects.begin(), options.effects.end());
-	if (hdrBridge && !noFP16) {
-		_runtimeEffects.push_back({ .name = "SDRToHDR_FP16" });
+	for (const EffectOption& effect : options.effects) {
+		if (hdrBridge && (effect.name == "HDRToSDR" ||
+			effect.name == "SDRToHDR" || effect.name == "HDRToSDR_FP16" ||
+			effect.name == "SDRToHDR_FP16")) {
+			continue;
+		}
+		_runtimeEffects.push_back(effect);
+	}
+	if (hdrBridge) {
+		_runtimeEffects.push_back({ .name = useFp16HdrBridge
+			? "SDRToHDR_FP16" : "SDRToHDR" });
 	}
 	const std::vector<EffectOption>& effects = _runtimeEffects;
 	assert(!effects.empty());
@@ -853,7 +862,7 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	
 	int duration = Measure([&]() {
 		Win32Helper::RunParallel([&](uint32_t id) {
-			const bool forceFP16Default = hdrBridge &&
+			const bool forceFP16Default = useFp16HdrBridge &&
 				effects[id].name != "HDRToSDR_FP16" &&
 				effects[id].name != "SDRToHDR_FP16";
 			std::optional<EffectDesc> desc = CompileEffect(
