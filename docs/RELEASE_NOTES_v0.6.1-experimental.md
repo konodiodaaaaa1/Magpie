@@ -56,7 +56,7 @@
 
 ## 已知问题与验证状态
 
-- 本地候选已通过 Release x64 编译和静态包结构检查；PotPlayer 全屏/缩放、暂停恢复、游戏切屏、Frame Guidance 模式对照和颜色通道仍需在目标 NVIDIA GPU 上完成最终运行时回归。
+- 本地候选已通过干净源码的 Release x64 重建和静态包结构检查；还使用与 GitHub 公布哈希一致的官方 v0.6.0 完整包及 Hotfix，按顺序覆盖本最小更新包并完成启动冒烟测试。PotPlayer 全屏/缩放、暂停恢复、游戏切屏、Frame Guidance 模式对照和颜色通道仍需在目标 NVIDIA GPU 上完成最终运行时回归。
 - `.review-pr4` 中“缩放期间实时修改效果参数”和“实时应用帧生成/FrameRate Filter 参数”尚未合并，不包含在 v0.6.1 中。
 
 ## 文件校验
@@ -65,8 +65,8 @@
 | --- | ---: | --- |
 | `NGX_OTA_Switch.bat` | 4,294 | `D0F96B57F7E91101460EEB68CD618B2C11866A4DFC6901741C17ACECAC04C465` |
 | `DLSSNR-DLL-Options-310.8.0.0.zip` | 226,489,312 | `9F5A69EFE34C93ADA337F35BD137646BB769F2795780646BB3802A10E32C7171` |
-| `Magpie-v0.6.0-to-v0.6.1-Minimal-Update-x64.zip` | 2,161,019 | `60940F35980FECFF1ED311DEC3325960684CD0718B0C6BA7E9572321216F9013` |
-| `Magpie-Experimental-x64.zip` | 801,179,670 | `1BE7841861E8F7CDB669B840D6B14E2F16627786F1904742A99E7C1EC31FAEF3` |
+| `Magpie-v0.6.0-to-v0.6.1-Minimal-Update-x64.zip` | 2,174,892 | `62F940A23F754023AE532662FC9669F35F65CFC9A8128018062E0CD766EF405B` |
+| `Magpie-Experimental-x64.zip` | 801,193,852 | `E6186F04E0AE3B046F741746626F09DE24ABFA7EF2422DCC8692FAD45C2ACDC0` |
 | `Magpie-v0.6.1-TensorRT-Depth-Components-x64.7z.001` | 1,338,992,585 | `C6868853155422A0238843C6392F5A3601DBB5CFC5D9F27659FB1EEF26471048` |
 | `Magpie-v0.6.1-TensorRT-Depth-Components-x64.7z.002` | 1,338,992,586 | `7A8DC85BEC7EE7A2FFD6671018898A2404AF29F036FD160C36A2F6F145F5EBC3` |
 
@@ -132,7 +132,7 @@ Use this script to view, enable, disable, or restore the default NVIDIA NGX OTA 
 
 ## Known Issues and Validation Status
 
-- The local candidate passed the Release x64 build and static package-layout checks. Final target-NVIDIA-GPU regression is still required for PotPlayer fullscreen/scaling, pause/resume, game focus switching, Frame Guidance mode comparisons, and color-channel behavior.
+- The local candidate passed a clean-source Release x64 rebuild and static package-layout checks. The minimal update was also overlaid, in order, onto official v0.6.0 full-package and Hotfix assets whose hashes match GitHub, followed by a successful startup smoke test. Final target-NVIDIA-GPU regression is still required for PotPlayer fullscreen/scaling, pause/resume, game focus switching, Frame Guidance mode comparisons, and color-channel behavior.
 - The `.review-pr4` live effect-parameter editing and live frame-generation/FrameRate Filter parameter updates have not been merged and are not included in v0.6.1.
 
 ## File Verification
@@ -141,8 +141,8 @@ Use this script to view, enable, disable, or restore the default NVIDIA NGX OTA 
 | --- | ---: | --- |
 | `NGX_OTA_Switch.bat` | 4,294 | `D0F96B57F7E91101460EEB68CD618B2C11866A4DFC6901741C17ACECAC04C465` |
 | `DLSSNR-DLL-Options-310.8.0.0.zip` | 226,489,312 | `9F5A69EFE34C93ADA337F35BD137646BB769F2795780646BB3802A10E32C7171` |
-| `Magpie-v0.6.0-to-v0.6.1-Minimal-Update-x64.zip` | 2,161,019 | `60940F35980FECFF1ED311DEC3325960684CD0718B0C6BA7E9572321216F9013` |
-| `Magpie-Experimental-x64.zip` | 801,179,670 | `1BE7841861E8F7CDB669B840D6B14E2F16627786F1904742A99E7C1EC31FAEF3` |
+| `Magpie-v0.6.0-to-v0.6.1-Minimal-Update-x64.zip` | 2,174,892 | `62F940A23F754023AE532662FC9669F35F65CFC9A8128018062E0CD766EF405B` |
+| `Magpie-Experimental-x64.zip` | 801,193,852 | `E6186F04E0AE3B046F741746626F09DE24ABFA7EF2422DCC8692FAD45C2ACDC0` |
 | `Magpie-v0.6.1-TensorRT-Depth-Components-x64.7z.001` | 1,338,992,585 | `C6868853155422A0238843C6392F5A3601DBB5CFC5D9F27659FB1EEF26471048` |
 | `Magpie-v0.6.1-TensorRT-Depth-Components-x64.7z.002` | 1,338,992,586 | `7A8DC85BEC7EE7A2FFD6671018898A2404AF29F036FD160C36A2F6F145F5EBC3` |
 
