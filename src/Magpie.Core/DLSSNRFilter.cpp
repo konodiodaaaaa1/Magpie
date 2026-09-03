@@ -1560,16 +1560,27 @@ bool DLSSNRFilter::Initialize(
 			inputDesc.Width, inputDesc.Height, outputDesc.Width, outputDesc.Height));
 		return false;
 	}
-	const bool supportedInput = inputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-		inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
-		inputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
-	if (!supportedInput || (outputDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
-		outputDesc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT)) {
+	const bool inputIsRgba8 = inputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM;
+	const bool inputIsBgra8 = inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
+	const bool inputIsFp16 = inputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+	const bool outputIsRgba8 = outputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM;
+	const bool outputIsFp16 = outputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+	const bool supportedInput = inputIsRgba8 || inputIsBgra8 || inputIsFp16;
+	const bool supportedOutput = outputIsRgba8 || outputIsFp16;
+	const bool supportedFormatPair =
+		(inputIsRgba8 && outputIsRgba8) ||
+		(inputIsBgra8 && outputIsRgba8) ||
+		(inputIsFp16 && outputIsFp16);
+	if (!supportedInput || !supportedOutput || !supportedFormatPair) {
 		Logger::Get().Error(fmt::format(
-			"DLSSNR unsupported formats: input={}, output={}",
+			"DLSSNR unsupported format pair: input={}, output={}",
 			(uint32_t)inputDesc.Format, (uint32_t)outputDesc.Format));
 		return false;
 	}
+	Logger::Get().Info(fmt::format(
+		"DLSSNR format pair accepted: input={} output={} path={}",
+		(uint32_t)inputDesc.Format, (uint32_t)outputDesc.Format,
+		inputIsFp16 ? "FP16" : inputIsBgra8 ? "BGRA8->RGBA8" : "R8"));
 	impl->sourceWidth = inputDesc.Width;
 	impl->sourceHeight = inputDesc.Height;
 	impl->useResolutionScaling = settings.enableInputResolutionScaling;
@@ -1583,7 +1594,7 @@ bool DLSSNRFilter::Initialize(
 		1u, static_cast<uint32_t>(std::lround(
 			double(inputDesc.Height) * double(resolutionPercent) / 100.0))) :
 		inputDesc.Height;
-	impl->convertInputToRgba = inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
+	impl->convertInputToRgba = inputIsBgra8;
 
 	if (!ngxCore.Acquire(resources, "DLSSNR")) {
 		return false;
@@ -1608,13 +1619,20 @@ bool DLSSNRFilter::Initialize(
 		return false;
 	}
 
-	D3D11_TEXTURE2D_DESC sharedDesc = outputDesc;
-	sharedDesc.Format = outputDesc.Format;
-	sharedDesc.Width = impl->width;
-	sharedDesc.Height = impl->height;
-	if (!CreateSharedTexture(*impl, sharedDesc, true,
+	D3D11_TEXTURE2D_DESC sharedInputDesc = inputDesc;
+	// DLSSNR consumes RGBA ordering. BGRA capture is converted into an RGBA
+	// shared surface before the D3D12 call; R8 and FP16 paths stay native.
+	sharedInputDesc.Format = inputIsBgra8 ?
+		DXGI_FORMAT_R8G8B8A8_UNORM : inputDesc.Format;
+	sharedInputDesc.Width = impl->width;
+	sharedInputDesc.Height = impl->height;
+	D3D11_TEXTURE2D_DESC sharedOutputDesc = outputDesc;
+	sharedOutputDesc.Format = outputDesc.Format;
+	sharedOutputDesc.Width = impl->width;
+	sharedOutputDesc.Height = impl->height;
+	if (!CreateSharedTexture(*impl, sharedInputDesc, true,
 		impl->sharedInput11, impl->sharedInput12) ||
-		!CreateSharedTexture(*impl, sharedDesc, true,
+		!CreateSharedTexture(*impl, sharedOutputDesc, true,
 			impl->sharedOutput11, impl->sharedOutput12)) {
 		return false;
 	}
