@@ -583,6 +583,23 @@ void HomeViewModel::IsAutoHDRBridgeEnabled(bool value) {
 	RaisePropertyChanged(L"IsAutoHDRBridgeEnabled");
 }
 
+int HomeViewModel::HdrBridgeFormat() const noexcept {
+	return (int)AppSettings::Get().HdrBridgeFormat();
+}
+
+void HomeViewModel::HdrBridgeFormat(int value) {
+	if (value < 0 || value >= (int)HDRBridgeFormat::COUNT) {
+		return;
+	}
+	AppSettings& settings = AppSettings::Get();
+	const auto format = (HDRBridgeFormat)value;
+	if (settings.HdrBridgeFormat() == format) {
+		return;
+	}
+	settings.HdrBridgeFormat(format);
+	RaisePropertyChanged(L"HdrBridgeFormat");
+}
+
 double HomeViewModel::HdrSdrWhitePoint() const noexcept {
 	return AppSettings::Get().HdrSdrWhitePoint();
 }

@@ -12,6 +12,12 @@ enum class CaptureMethod {
 	COUNT
 };
 
+enum class HDRBridgeFormat {
+	R8,
+	FP16,
+	COUNT
+};
+
 enum class MultiMonitorUsage {
 	Closest,
 	Intersected,
@@ -204,6 +210,7 @@ struct ScalingOptions {
 	std::optional<float> maxFrameRate;
 	float cursorScaling = 1.0f;
 	CaptureMethod captureMethod = CaptureMethod::GraphicsCapture;
+	HDRBridgeFormat hdrBridgeFormat = HDRBridgeFormat::R8;
 	float hdrSdrWhitePoint = 4.5f;
 	MultiMonitorUsage multiMonitorUsage = MultiMonitorUsage::Closest;
 	std::wstring preferredMonitorId;

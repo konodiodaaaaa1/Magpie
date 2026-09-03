@@ -734,13 +734,25 @@
     <value>Automatic HDR compatibility bridge</value>
   </data>
   <data name="Home_Advanced_AutoHDRBridge.Description" xml:space="preserve">
-    <value>Wrap HDR captures in an FP16 sRGB-range chain and restore HDR before presentation</value>
+    <value>Wrap HDR captures in the selected sRGB intermediate format and restore HDR before presentation</value>
   </data>
   <data name="Home_Advanced_HdrSdrWhitePoint.Header" xml:space="preserve">
     <value>HDR bridge SDR white point</value>
   </data>
   <data name="Home_Advanced_HdrSdrWhitePoint.Description" xml:space="preserve">
     <value>Adjust SDR luminance mapping in scRGB white-point units; default 4.5</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat.Header" xml:space="preserve">
+    <value>HDR bridge intermediate format</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat.Description" xml:space="preserve">
+    <value>Select R8 sRGB or FP16 sRGB for the HDR bridge; RTX Video VSR uses R8 sRGB</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat_R8.Content" xml:space="preserve">
+    <value>R8 sRGB (VSR compatible)</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat_FP16.Content" xml:space="preserve">
+    <value>FP16 sRGB</value>
   </data>
   <data name="Dialog_JsonFile" xml:space="preserve">
     <value>JSON file</value>

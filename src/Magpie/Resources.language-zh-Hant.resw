@@ -719,13 +719,25 @@
     <value>HDR 自動相容橋接</value>
   </data>
   <data name="Home_Advanced_AutoHDRBridge.Description" xml:space="preserve">
-    <value>HDR 擷取時自動將效果鏈轉換為 FP16 sRGB 範圍，輸出前恢復 HDR</value>
+    <value>HDR 擷取時自動將效果鏈轉換為所選 sRGB 中間格式，輸出前恢復 HDR</value>
   </data>
   <data name="Home_Advanced_HdrSdrWhitePoint.Header" xml:space="preserve">
     <value>HDR 橋接 SDR 白點</value>
   </data>
   <data name="Home_Advanced_HdrSdrWhitePoint.Description" xml:space="preserve">
     <value>以 scRGB 白點倍數調整 SDR 亮度映射，預設 4.5</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat.Header" xml:space="preserve">
+    <value>HDR 橋接中間格式</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat.Description" xml:space="preserve">
+    <value>選擇 HDR 橋接使用 R8 sRGB 或 FP16 sRGB，RTX Video VSR 使用 R8 sRGB</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat_R8.Content" xml:space="preserve">
+    <value>R8 sRGB（相容 VSR）</value>
+  </data>
+  <data name="Home_Advanced_HdrBridgeFormat_FP16.Content" xml:space="preserve">
+    <value>FP16 sRGB</value>
   </data>
   <data name="Profile_Performance_FrameRateLimiter.Header" xml:space="preserve">
     <value>幀率限制</value>

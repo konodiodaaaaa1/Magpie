@@ -53,6 +53,7 @@ void ScalingOptions::Log() const noexcept {
 	IsAllowScalingMaximized: {}
 	IsSimulateExclusiveFullscreen: {}
 	IsAutoHDRBridgeEnabled: {}
+	hdrBridgeFormat: {}
 	hdrSdrWhitePoint: {}
 	Is3DGameMode: {}
 	IsCaptureTitleBar: {}
@@ -90,6 +91,7 @@ void ScalingOptions::Log() const noexcept {
 		IsAllowScalingMaximized(),
 		IsSimulateExclusiveFullscreen(),
 		IsAutoHDRBridgeEnabled(),
+		(int)hdrBridgeFormat,
 		hdrSdrWhitePoint,
 		Is3DGameMode(),
 		IsCaptureTitleBar(),

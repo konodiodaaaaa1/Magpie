@@ -82,6 +82,7 @@ struct _AppSettingsData {
 	bool _isStatisticsForDynamicDetectionEnabled = false;
 	bool _isFP16Disabled = false;
 	bool _isAutoHDRBridgeEnabled = true;
+	HDRBridgeFormat _hdrBridgeFormat = HDRBridgeFormat::R8;
 	float _hdrSdrWhitePoint = 4.5f;
 };
 
@@ -229,6 +230,18 @@ public:
 
 	void IsAutoHDRBridgeEnabled(bool value) noexcept {
 		_isAutoHDRBridgeEnabled = value;
+		SaveAsync();
+	}
+
+	HDRBridgeFormat HdrBridgeFormat() const noexcept {
+		return _hdrBridgeFormat;
+	}
+
+	void HdrBridgeFormat(HDRBridgeFormat value) noexcept {
+		if (_hdrBridgeFormat == value) {
+			return;
+		}
+		_hdrBridgeFormat = value;
 		SaveAsync();
 	}
 

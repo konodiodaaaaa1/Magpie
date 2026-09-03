@@ -833,7 +833,8 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	const bool noFP16 = !_backendResources.IsFP16Supported() || options.IsFP16Disabled();
 	const bool hdrBridge = options.captureMethod == CaptureMethod::GraphicsCaptureHDR &&
 		options.IsAutoHDRBridgeEnabled();
-	const bool useFp16HdrBridge = hdrBridge && !noFP16;
+	const bool useFp16HdrBridge = hdrBridge && !noFP16 &&
+		options.hdrBridgeFormat == HDRBridgeFormat::FP16;
 	_runtimeEffects.clear();
 	_runtimeEffects.reserve(options.effects.size() + (hdrBridge ? 2 : 0));
 	if (hdrBridge) {

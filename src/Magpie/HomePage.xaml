@@ -259,6 +259,18 @@
 					                SpinButtonPlacementMode="Compact"
 					                Value="{x:Bind ViewModel.HdrSdrWhitePoint, Mode=TwoWay}" />
 				</local:SettingsCard>
+				<local:SettingsCard x:Uid="Home_Advanced_HdrBridgeFormat"
+				                    IsWrapEnabled="True">
+					<local:SettingsCard.HeaderIcon>
+						<FontIcon Glyph="&#xE9D9;" />
+					</local:SettingsCard.HeaderIcon>
+					<ComboBox MinWidth="180"
+					          DropDownOpened="ComboBox_DropDownOpened"
+					          SelectedIndex="{x:Bind ViewModel.HdrBridgeFormat, Mode=TwoWay}">
+						<ComboBoxItem x:Uid="Home_Advanced_HdrBridgeFormat_R8" />
+						<ComboBoxItem x:Uid="Home_Advanced_HdrBridgeFormat_FP16" />
+					</ComboBox>
+				</local:SettingsCard>
 				<local:SettingsCard x:Uid="Home_Advanced_MinFrameRate"
 				                    IsWrapEnabled="True">
 					<local:SettingsCard.HeaderIcon>

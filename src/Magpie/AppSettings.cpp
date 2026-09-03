@@ -647,6 +647,8 @@ bool AppSettings::_Save(const _AppSettingsData& data) noexcept {
 	writer.Bool(data._isFP16Disabled);
 	writer.Key("autoHDRBridge");
 	writer.Bool(data._isAutoHDRBridgeEnabled);
+	writer.Key("hdrBridgeFormat");
+	writer.Uint((uint32_t)data._hdrBridgeFormat);
 	writer.Key("hdrSdrWhitePoint");
 	writer.Double(data._hdrSdrWhitePoint);
 	writer.Key("experimentalDlssnrSettingsVersion");
@@ -863,6 +865,12 @@ void AppSettings::_LoadSettings(const rapidjson::GenericObject<true, rapidjson::
 	JsonHelper::ReadFloat(root, "minFrameRate", _minFrameRate);
 	JsonHelper::ReadBool(root, "disableFP16", _isFP16Disabled);
 	JsonHelper::ReadBool(root, "autoHDRBridge", _isAutoHDRBridgeEnabled);
+	uint32_t hdrBridgeFormat = (uint32_t)HDRBridgeFormat::R8;
+	JsonHelper::ReadUInt(root, "hdrBridgeFormat", hdrBridgeFormat);
+	if (hdrBridgeFormat >= (uint32_t)HDRBridgeFormat::COUNT) {
+		hdrBridgeFormat = (uint32_t)HDRBridgeFormat::R8;
+	}
+	_hdrBridgeFormat = (HDRBridgeFormat)hdrBridgeFormat;
 	JsonHelper::ReadFloat(root, "hdrSdrWhitePoint", _hdrSdrWhitePoint);
 	_hdrSdrWhitePoint = std::clamp(_hdrSdrWhitePoint, 1.0f, 10.0f);
 
