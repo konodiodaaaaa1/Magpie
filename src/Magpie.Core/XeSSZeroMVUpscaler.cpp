@@ -23,8 +23,11 @@ struct XeSSZeroMVUpscaler::Impl {
 	winrt::com_ptr<ID3D11Texture2D> sharedOutput11;
 	winrt::com_ptr<ID3D11Texture2D> sharedMotion11;
 	winrt::com_ptr<ID3D11ShaderResourceView> inputSrv11;
+	winrt::com_ptr<ID3D11ShaderResourceView> outputSrv11;
 	winrt::com_ptr<ID3D11UnorderedAccessView> sharedInputUav11;
+	winrt::com_ptr<ID3D11UnorderedAccessView> outputUav11;
 	winrt::com_ptr<ID3D11ComputeShader> colorConvertShader11;
+	winrt::com_ptr<ID3D11ComputeShader> outputConvertShader11;
 	winrt::com_ptr<ID3D12Resource> sharedInput12;
 	winrt::com_ptr<ID3D12Resource> sharedOutput12;
 	winrt::com_ptr<ID3D12Resource> sharedMotion12;
@@ -43,6 +46,8 @@ struct XeSSZeroMVUpscaler::Impl {
 	uint32_t outputHeight = 0;
 	uint64_t lastSubmittedValue = 0;
 	bool convertInputToRgba = false;
+	bool convertInputToR8 = false;
+	bool convertOutputFromR8 = false;
 	bool enableOpticalFlow = false;
 	bool enableJitter = false;
 	uint32_t frameIndex = 0;
@@ -55,6 +60,14 @@ RWTexture2D<float4> OutputColor : register(u0);
 
 [numthreads(8, 8, 1)]
 void ConvertToRgba(uint3 tid : SV_DispatchThreadID) {
+    uint width, height;
+    OutputColor.GetDimensions(width, height);
+    if (tid.x >= width || tid.y >= height) return;
+    OutputColor[tid.xy] = InputColor.Load(int3(tid.xy, 0));
+}
+
+[numthreads(8, 8, 1)]
+void ConvertToOutput(uint3 tid : SV_DispatchThreadID) {
     uint width, height;
     OutputColor.GetDimensions(width, height);
     if (tid.x >= width || tid.y >= height) return;
@@ -196,9 +209,13 @@ bool XeSSZeroMVUpscaler::Initialize(
 			inputDesc.Width, inputDesc.Height, outputDesc.Width, outputDesc.Height));
 		return false;
 	}
-	const bool supportedInputFormat = inputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
-		inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
-	if (!supportedInputFormat || outputDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM) {
+	const bool inputIsRgba8 = inputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM;
+	const bool inputIsBgra8 = inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
+	const bool inputIsFp16 = inputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+	const bool outputIsR8 = outputDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM;
+	const bool outputIsFp16 = outputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+	const bool supportedInputFormat = inputIsRgba8 || inputIsBgra8 || inputIsFp16;
+	if (!supportedInputFormat || (!outputIsR8 && !outputIsFp16)) {
 		Logger::Get().Error(fmt::format(
 			"XeSS Zero-MV unsupported texture formats: input={}, output={}",
 			(uint32_t)inputDesc.Format, (uint32_t)outputDesc.Format));
@@ -215,7 +232,13 @@ bool XeSSZeroMVUpscaler::Initialize(
 	impl->inputHeight = inputDesc.Height;
 	impl->outputWidth = outputDesc.Width;
 	impl->outputHeight = outputDesc.Height;
-	impl->convertInputToRgba = inputDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM;
+	impl->convertInputToRgba = inputIsBgra8;
+	impl->convertInputToR8 = inputIsBgra8 || inputIsFp16;
+	impl->convertOutputFromR8 = outputIsFp16;
+	Logger::Get().Info(fmt::format(
+		"XeSS Zero-MV format pair accepted: input={} output={} inputBridge={} outputBridge={}",
+		(uint32_t)inputDesc.Format, (uint32_t)outputDesc.Format,
+		impl->convertInputToR8, impl->convertOutputFromR8));
 
 	HRESULT hr = D3D12CreateDevice(deviceResources.GetGraphicsAdapter(), D3D_FEATURE_LEVEL_11_0,
 		IID_PPV_ARGS(impl->device12.put()));
@@ -245,11 +268,14 @@ bool XeSSZeroMVUpscaler::Initialize(
 	D3D11_TEXTURE2D_DESC xessInputDesc = inputDesc;
 	xessInputDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	xessInputDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+	D3D11_TEXTURE2D_DESC xessOutputDesc = outputDesc;
+	xessOutputDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	xessOutputDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 	if (!CreateSharedTexture(*impl, xessInputDesc, impl->sharedInput11, impl->sharedInput12) ||
-		!CreateSharedTexture(*impl, outputDesc, impl->sharedOutput11, impl->sharedOutput12)) {
+		!CreateSharedTexture(*impl, xessOutputDesc, impl->sharedOutput11, impl->sharedOutput12)) {
 		return false;
 	}
-	if (impl->convertInputToRgba) {
+	if (impl->convertInputToR8) {
 		hr = impl->device11->CreateShaderResourceView(input, nullptr, impl->inputSrv11.put());
 		if (SUCCEEDED(hr)) hr = impl->device11->CreateUnorderedAccessView(
 			impl->sharedInput11.get(), nullptr, impl->sharedInputUav11.put());
@@ -261,8 +287,36 @@ bool XeSSZeroMVUpscaler::Initialize(
 		if (SUCCEEDED(hr)) hr = impl->device11->CreateComputeShader(
 			shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr,
 			impl->colorConvertShader11.put());
+		if (SUCCEEDED(hr) && impl->convertOutputFromR8) {
+			hr = impl->device11->CreateShaderResourceView(
+				impl->sharedOutput11.get(), nullptr, impl->outputSrv11.put());
+			if (SUCCEEDED(hr)) hr = impl->device11->CreateUnorderedAccessView(
+				output, nullptr, impl->outputUav11.put());
+			winrt::com_ptr<ID3DBlob> outputBlob;
+			if (SUCCEEDED(hr) && !DirectXHelper::CompileComputeShader(
+				COLOR_CONVERT_HLSL, "ConvertToOutput", outputBlob.put(), "XeSSOutputConvert")) {
+				hr = E_FAIL;
+			}
+			if (SUCCEEDED(hr)) hr = impl->device11->CreateComputeShader(
+				outputBlob->GetBufferPointer(), outputBlob->GetBufferSize(), nullptr,
+				impl->outputConvertShader11.put());
+		}
 		if (FAILED(hr)) {
 			Logger::Get().ComError("Create XeSS BGRA-to-RGBA conversion resources failed", hr);
+			return false;
+		}
+	} else if (impl->convertOutputFromR8) {
+		winrt::com_ptr<ID3DBlob> outputBlob;
+		if (FAILED(impl->device11->CreateShaderResourceView(
+			impl->sharedOutput11.get(), nullptr, impl->outputSrv11.put())) ||
+			FAILED(impl->device11->CreateUnorderedAccessView(
+				output, nullptr, impl->outputUav11.put())) ||
+			!DirectXHelper::CompileComputeShader(
+				COLOR_CONVERT_HLSL, "ConvertToOutput", outputBlob.put(), "XeSSOutputConvert") ||
+			FAILED(impl->device11->CreateComputeShader(
+				outputBlob->GetBufferPointer(), outputBlob->GetBufferSize(), nullptr,
+				impl->outputConvertShader11.put()))) {
+			Logger::Get().Error("Create XeSS output conversion resources failed");
 			return false;
 		}
 	}
@@ -475,7 +529,7 @@ bool XeSSZeroMVUpscaler::Draw(const NativeEffectDrawContext& drawContext) noexce
 	// A command allocator cannot be reset while its previous D3D12 submission
 	// is still executing. Usually the D3D11 consumer has already waited for it.
 	if (!WaitForFenceValue(impl, impl.lastSubmittedValue)) return false;
-	if (impl.convertInputToRgba) {
+	if (impl.convertInputToR8) {
 		ID3D11ShaderResourceView* inputSrv = impl.inputSrv11.get();
 		ID3D11UnorderedAccessView* outputUav = impl.sharedInputUav11.get();
 		impl.context11->CSSetShader(impl.colorConvertShader11.get(), nullptr, 0);
@@ -579,7 +633,21 @@ bool XeSSZeroMVUpscaler::Draw(const NativeEffectDrawContext& drawContext) noexce
 		Logger::Get().ComError("Synchronize XeSS output failed", hr);
 		return false;
 	}
-	impl.context11->CopyResource(output, impl.sharedOutput11.get());
+	if (impl.convertOutputFromR8) {
+		ID3D11ShaderResourceView* inputSrv = impl.outputSrv11.get();
+		ID3D11UnorderedAccessView* outputUav = impl.outputUav11.get();
+		impl.context11->CSSetShader(impl.outputConvertShader11.get(), nullptr, 0);
+		impl.context11->CSSetShaderResources(0, 1, &inputSrv);
+		impl.context11->CSSetUnorderedAccessViews(0, 1, &outputUav, nullptr);
+		impl.context11->Dispatch((impl.outputWidth + 7) / 8, (impl.outputHeight + 7) / 8, 1);
+		ID3D11ShaderResourceView* nullSrv = nullptr;
+		ID3D11UnorderedAccessView* nullUav = nullptr;
+		impl.context11->CSSetShaderResources(0, 1, &nullSrv);
+		impl.context11->CSSetUnorderedAccessViews(0, 1, &nullUav, nullptr);
+		impl.context11->CSSetShader(nullptr, nullptr, 0);
+	} else {
+		impl.context11->CopyResource(output, impl.sharedOutput11.get());
+	}
 	impl.resetHistory = false;
 	return true;
 }

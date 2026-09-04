@@ -746,10 +746,10 @@
     <value>HDR bridge intermediate format</value>
   </data>
   <data name="Home_Advanced_HdrBridgeFormat.Description" xml:space="preserve">
-    <value>Select R8 sRGB or FP16 sRGB for the HDR bridge; RTX Video VSR uses R8 sRGB</value>
+    <value>Select R8 sRGB or FP16 sRGB for the HDR bridge</value>
   </data>
   <data name="Home_Advanced_HdrBridgeFormat_R8.Content" xml:space="preserve">
-    <value>R8 sRGB (VSR compatible)</value>
+    <value>R8 sRGB</value>
   </data>
   <data name="Home_Advanced_HdrBridgeFormat_FP16.Content" xml:space="preserve">
     <value>FP16 sRGB</value>

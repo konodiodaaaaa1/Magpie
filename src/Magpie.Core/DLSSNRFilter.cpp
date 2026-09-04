@@ -1567,13 +1567,12 @@ bool DLSSNRFilter::Initialize(
 	const bool outputIsFp16 = outputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 	const bool supportedInput = inputIsRgba8 || inputIsBgra8 || inputIsFp16;
 	const bool supportedOutput = outputIsRgba8 || outputIsFp16;
-	const bool supportedFormatPair =
-		(inputIsRgba8 && outputIsRgba8) ||
-		(inputIsBgra8 && outputIsRgba8) ||
-		(inputIsFp16 && outputIsFp16);
-	if (!supportedInput || !supportedOutput || !supportedFormatPair) {
+	// The HDR bridge controls the formats on either side of the effect chain.
+	// DLSSNR can consume and produce each supported colour format independently,
+	// so mixed endpoints such as FP16 -> R8 are valid at an effect boundary.
+	if (!supportedInput || !supportedOutput) {
 		Logger::Get().Error(fmt::format(
-			"DLSSNR unsupported format pair: input={}, output={}",
+			"DLSSNR unsupported endpoint format: input={}, output={}",
 			(uint32_t)inputDesc.Format, (uint32_t)outputDesc.Format));
 		return false;
 	}

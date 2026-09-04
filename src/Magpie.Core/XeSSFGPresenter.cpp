@@ -13,7 +13,15 @@
 namespace Magpie {
 
 static constexpr uint32_t BUFFER_COUNT = 3;
-static constexpr DXGI_FORMAT COLOR_FORMAT = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+static bool IsHdrPresentation() noexcept {
+	return ScalingWindow::Get().Options().captureMethod == CaptureMethod::GraphicsCaptureHDR;
+}
+
+static DXGI_FORMAT GetXeSSFGColorFormat() noexcept {
+	return IsHdrPresentation() ?
+		DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
+}
 
 static bool XeFGSucceeded(xefg_swapchain_result_t result) noexcept {
 	return result >= XEFG_SWAPCHAIN_RESULT_SUCCESS;
@@ -140,7 +148,7 @@ static bool CreateSharedColor(XeSSFGPresenter::Impl& impl) noexcept {
 	desc.Height = impl.height;
 	desc.MipLevels = 1;
 	desc.ArraySize = 1;
-	desc.Format = COLOR_FORMAT;
+	desc.Format = GetXeSSFGColorFormat();
 	desc.SampleDesc.Count = 1;
 	desc.Usage = D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
@@ -398,7 +406,7 @@ bool XeSSFGPresenter::_Initialize(HWND hwndAttach) noexcept {
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
 	swapChainDesc.Width = impl->width;
 	swapChainDesc.Height = impl->height;
-	swapChainDesc.Format = COLOR_FORMAT;
+	swapChainDesc.Format = GetXeSSFGColorFormat();
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.BufferCount = BUFFER_COUNT;
 	swapChainDesc.SampleDesc.Count = 1;
@@ -422,6 +430,13 @@ bool XeSSFGPresenter::_Initialize(HWND hwndAttach) noexcept {
 	if (!XeFGSucceeded(result) || !impl->swapChain) {
 		LogXeFGResult("get proxy swap chain failed", result);
 		return false;
+	}
+	if (IsHdrPresentation()) {
+		const HRESULT colorSpaceHr = impl->swapChain->SetColorSpace1(
+			DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+		if (FAILED(colorSpaceHr)) {
+			Logger::Get().ComWarn("XeSSFG HDR10 color space setup failed", colorSpaceHr);
+		}
 	}
 	impl->swapChain->SetMaximumFrameLatency(1);
 	impl->frameLatencyWaitableObject.reset(
@@ -653,7 +668,7 @@ bool XeSSFGPresenter::OnResize() noexcept {
 	const UINT flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
 		(_deviceResources->IsTearingSupported() ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
 	HRESULT hr = impl.swapChain->ResizeBuffers(
-		BUFFER_COUNT, width, height, COLOR_FORMAT, flags);
+		BUFFER_COUNT, width, height, GetXeSSFGColorFormat(), flags);
 	if (FAILED(hr)) {
 		Logger::Get().ComError("Resize XeSSFG proxy swap chain failed", hr);
 		return false;

@@ -1612,7 +1612,8 @@ static std::string ReadEffectSource(const std::wstring& effectName) noexcept {
 uint32_t EffectCompiler::Compile(
 	EffectDesc& desc,
 	uint32_t flags,
-	const phmap::flat_hash_map<std::string, float>* inlineParams
+	const phmap::flat_hash_map<std::string, float>* inlineParams,
+	EffectIntermediateTextureFormat endpointFormat
 ) noexcept {
 	bool noCompile = flags & EffectCompilerFlags::NoCompile;
 	bool noCache = noCompile || (flags & EffectCompilerFlags::NoCache);
@@ -1645,6 +1646,7 @@ uint32_t EffectCompiler::Compile(
 		// 标志不同将保存到不同的缓存文件里，因此不需要哈希。
 		cacheKey.reserve(source.size() + 256);
 		cacheKey.append(source);
+		cacheKey.append(fmt::format("\n__endpoint_format={}\n", (uint32_t)endpointFormat));
 
 		if (flags & EffectCompilerFlags::InlineParams) {
 			for (const auto& pair : *inlineParams) {
@@ -1779,9 +1781,8 @@ uint32_t EffectCompiler::Compile(
 	{
 		auto& inputDesc = desc.textures.emplace_back();
 		inputDesc.name = "INPUT";
-		inputDesc.format = flags & EffectCompilerFlags::ForceFP16Default
-			? EffectIntermediateTextureFormat::R16G16B16A16_FLOAT
-			: EffectIntermediateTextureFormat::R8G8B8A8_UNORM;
+		inputDesc.format = endpointFormat == EffectIntermediateTextureFormat::UNKNOWN
+			? EffectIntermediateTextureFormat::R8G8B8A8_UNORM : endpointFormat;
 		inputDesc.sizeExpr.first = "INPUT_WIDTH";
 		inputDesc.sizeExpr.second = "INPUT_HEIGHT";
 	}
@@ -1789,9 +1790,8 @@ uint32_t EffectCompiler::Compile(
 	{
 		auto& outputDesc = desc.textures.emplace_back();
 		outputDesc.name = "OUTPUT";
-		outputDesc.format = flags & EffectCompilerFlags::ForceFP16Default
-			? EffectIntermediateTextureFormat::R16G16B16A16_FLOAT
-			: EffectIntermediateTextureFormat::R8G8B8A8_UNORM;
+		outputDesc.format = endpointFormat == EffectIntermediateTextureFormat::UNKNOWN
+			? EffectIntermediateTextureFormat::R8G8B8A8_UNORM : endpointFormat;
 	}
 
 	for (size_t i = 0; i < textureBlocks.size(); ++i) {
@@ -1800,13 +1800,6 @@ uint32_t EffectCompiler::Compile(
 			return 1;
 		}
 	}
-	if (flags & EffectCompilerFlags::ForceFP16Default) {
-		// HDR sessions use an FP16 sRGB-range chain. Keep auxiliary textures at
-		// their declared formats while normalizing the public endpoints.
-		desc.textures[0].format = EffectIntermediateTextureFormat::R16G16B16A16_FLOAT;
-		desc.textures[1].format = EffectIntermediateTextureFormat::R16G16B16A16_FLOAT;
-	}
-
 	if (!noCompile) {
 		desc.samplers.clear();
 		for (size_t i = 0; i < samplerBlocks.size(); ++i) {

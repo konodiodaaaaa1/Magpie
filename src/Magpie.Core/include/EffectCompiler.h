@@ -1,4 +1,5 @@
 #pragma once
+#include "EffectDesc.h"
 #include <parallel_hashmap/phmap.h>
 
 namespace Magpie {
@@ -7,7 +8,6 @@ struct EffectCompilerFlags {
 	// 会影响编译出的字节码的标志放在低 16 位中，这样组织是为了便于缓存
 	static constexpr uint32_t InlineParams = 1;
 	static constexpr uint32_t NoFP16 = 1 << 1;
-	static constexpr uint32_t ForceFP16Default = 1 << 2;
 
 	// 只解析输出尺寸和参数，供用户界面使用
 	static constexpr uint32_t NoCompile = 1 << 16;
@@ -21,7 +21,8 @@ struct EffectCompiler {
 	static uint32_t Compile(
 		struct EffectDesc& desc,
 		uint32_t flags,	// EffectCompilerFlags
-		const phmap::flat_hash_map<std::string, float>* inlineParams = nullptr
+		const phmap::flat_hash_map<std::string, float>* inlineParams = nullptr,
+		EffectIntermediateTextureFormat endpointFormat = EffectIntermediateTextureFormat::UNKNOWN
 	) noexcept;
 };
 

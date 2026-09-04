@@ -786,7 +786,7 @@ static std::optional<EffectDesc> CompileEffect(
 	const EffectOption& effectOption,
 	bool noFP16,
 	bool forceInlineParams = false,
-	bool forceFP16Default = false
+	EffectIntermediateTextureFormat endpointFormat = EffectIntermediateTextureFormat::UNKNOWN
 ) noexcept {
 	// 指定效果名
 	EffectDesc result{ .name = effectOption.name };
@@ -808,13 +808,10 @@ static std::optional<EffectDesc> CompileEffect(
 	if (noFP16) {
 		compileFlag |= EffectCompilerFlags::NoFP16;
 	}
-	if (forceFP16Default) {
-		compileFlag |= EffectCompilerFlags::ForceFP16Default;
-	}
-
 	bool success = true;
 	uint32_t duration = Measure([&]() {
-		success = !EffectCompiler::Compile(result, compileFlag, &effectOption.parameters);
+		success = !EffectCompiler::Compile(
+			result, compileFlag, &effectOption.parameters, endpointFormat);
 	});
 
 	if (success) {
@@ -835,6 +832,9 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 		options.IsAutoHDRBridgeEnabled();
 	const bool useFp16HdrBridge = hdrBridge && !noFP16 &&
 		options.hdrBridgeFormat == HDRBridgeFormat::FP16;
+	const bool useXeSSFrameGeneration = std::ranges::any_of(
+		options.effects,
+		[](const EffectOption& effect) { return IsXeSSFrameGenerationEffect(effect.name); });
 	_runtimeEffects.clear();
 	_runtimeEffects.reserve(options.effects.size() + (hdrBridge ? 2 : 0));
 	if (hdrBridge) {
@@ -853,7 +853,8 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	}
 	if (hdrBridge) {
 		_runtimeEffects.push_back({
-			.name = useFp16HdrBridge ? "SDRToHDR_FP16" : "SDRToHDR",
+			.name = useXeSSFrameGeneration ? "SDRToHDR10" :
+				(useFp16HdrBridge ? "SDRToHDR_FP16" : "SDRToHDR"),
 			.parameters{{"sdrWhiteScale", options.hdrSdrWhitePoint}}
 		});
 	}
@@ -868,11 +869,17 @@ ID3D11Texture2D* Renderer::_BuildEffects() noexcept {
 	
 	int duration = Measure([&]() {
 		Win32Helper::RunParallel([&](uint32_t id) {
-			const bool forceFP16Default = useFp16HdrBridge &&
-				effects[id].name != "HDRToSDR_FP16" &&
-				effects[id].name != "SDRToHDR_FP16";
+			const bool isBridgeEffect = effects[id].name == "HDRToSDR" ||
+				effects[id].name == "SDRToHDR" ||
+				effects[id].name == "HDRToSDR_FP16" ||
+				effects[id].name == "SDRToHDR_FP16" ||
+				effects[id].name == "SDRToHDR10";
+			const auto endpointFormat = isBridgeEffect ?
+				EffectIntermediateTextureFormat::UNKNOWN :
+				(useFp16HdrBridge ? EffectIntermediateTextureFormat::R16G16B16A16_FLOAT :
+					EffectIntermediateTextureFormat::R8G8B8A8_UNORM);
 			std::optional<EffectDesc> desc = CompileEffect(
-				effects[id], noFP16, false, forceFP16Default);
+				effects[id], noFP16, false, endpointFormat);
 
 			auto lk = writeLock.lock_exclusive();
 			if (desc) {
@@ -1358,8 +1365,6 @@ HANDLE Renderer::_CreateSharedTexture(ID3D11Texture2D* effectsOutput) noexcept {
 	for (uint32_t i = 0; i < _sharedTextureSlotCount; ++i) {
 		_backendSharedTextures[i] = DirectXHelper::CreateTexture2D(
 			_backendResources.GetD3DDevice(),
-			// The frontend copies this texture into the presenter target. Keep the
-			// format identical to the effect output, including the HDR FP16 path.
 			desc.Format,
 			textureSize.cx,
 			textureSize.cy,
