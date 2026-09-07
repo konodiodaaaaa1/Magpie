@@ -4,8 +4,17 @@
 #include "ScalingModesPage.g.cpp"
 #endif
 #include "ControlHelper.h"
+#include "ContentDialogHelper.h"
 #include "EffectsService.h"
+#include "EffectHelper.h"
+#include "EffectParametersViewModel.h"
+#include "App.h"
+#include "CommonSharedConstants.h"
+#include "Logger.h"
+#include <cmath>
 #include <parallel_hashmap/phmap.h>
+#include <winrt/Windows.Devices.Input.h>
+#include <winrt/Windows.UI.Input.h>
 
 using namespace ::Magpie;
 using namespace winrt;
@@ -26,46 +35,659 @@ void ScalingModesPage::NumberBox_Loaded(IInspectable const& sender, RoutedEventA
 	ControlHelper::NumberBox_Loaded(sender);
 }
 
+void ScalingModesPage::_RefreshParameterSliderHint(Slider const& slider) {
+	if (auto parameter = slider.DataContext().try_as<Magpie::ScalingModeParameter>()) {
+		const auto loader = ResourceLoader::GetForCurrentView(
+			CommonSharedConstants::APP_RESOURCE_MAP_ID);
+		const auto text = fmt::format(fmt::runtime(std::wstring_view(loader.GetString(
+			L"Overlay_EffectParameters_ResetDefault"))),
+			fmt::format(L"{:.7g}", get_self<ScalingModeParameter>(parameter)->DefaultValue()));
+		ToolTipService::SetToolTip(slider, box_value(text));
+	}
+}
+
+void ScalingModesPage::ParameterSlider_Loaded(IInspectable const& sender, RoutedEventArgs const&) {
+	const auto slider = sender.as<Slider>();
+	_RefreshParameterSliderHint(slider);
+	if (!_parameterSliders.insert(reinterpret_cast<uintptr_t>(get_abi(slider))).second) return;
+	if (!_parameterSliderPressed) {
+		_parameterSliderPressed = box_value(PointerEventHandler{ get_weak(), &ScalingModesPage::_ParameterSlider_Pressed });
+		_parameterSliderMoved = box_value(PointerEventHandler{ get_weak(), &ScalingModesPage::_ParameterSlider_Moved });
+		_parameterSliderReleased = box_value(PointerEventHandler{ get_weak(), &ScalingModesPage::_ParameterSlider_Released });
+		_parameterSliderCanceled = box_value(PointerEventHandler{ get_weak(), &ScalingModesPage::_ParameterSlider_Canceled });
+		_parameterSliderCaptureLost = box_value(PointerEventHandler{ get_weak(), &ScalingModesPage::_ParameterSlider_CaptureLost });
+	}
+	// Thumb and track class handlers can already have consumed the event.
+	slider.AddHandler(UIElement::PointerPressedEvent(), _parameterSliderPressed, true);
+	slider.AddHandler(UIElement::PointerMovedEvent(), _parameterSliderMoved, true);
+	slider.AddHandler(UIElement::PointerReleasedEvent(), _parameterSliderReleased, true);
+	slider.AddHandler(UIElement::PointerCanceledEvent(), _parameterSliderCanceled, true);
+	slider.AddHandler(UIElement::PointerCaptureLostEvent(), _parameterSliderCaptureLost, true);
+}
+
+void ScalingModesPage::ParameterSlider_Unloaded(IInspectable const& sender, RoutedEventArgs const&) {
+	const auto slider = sender.as<Slider>();
+	if (_parameterSliders.erase(reinterpret_cast<uintptr_t>(get_abi(slider)))) {
+		slider.RemoveHandler(UIElement::PointerPressedEvent(), _parameterSliderPressed);
+		slider.RemoveHandler(UIElement::PointerMovedEvent(), _parameterSliderMoved);
+		slider.RemoveHandler(UIElement::PointerReleasedEvent(), _parameterSliderReleased);
+		slider.RemoveHandler(UIElement::PointerCanceledEvent(), _parameterSliderCanceled);
+		slider.RemoveHandler(UIElement::PointerCaptureLostEvent(), _parameterSliderCaptureLost);
+	}
+	_parameterResetGesture.Clear();
+	_resetHeldSlider = {};
+}
+
+void ScalingModesPage::ParameterSlider_LostFocus(IInspectable const&, RoutedEventArgs const&) {
+	_parameterResetGesture.Clear();
+	_resetHeldSlider = {};
+}
+
+void ScalingModesPage::ParameterSlider_DataContextChanged(
+	FrameworkElement const& sender, DataContextChangedEventArgs const&) {
+	_parameterResetGesture.Clear();
+	_resetHeldSlider = {};
+	_RefreshParameterSliderHint(sender.as<Slider>());
+}
+
+void ScalingModesPage::ParameterSlider_ValueChanged(
+	IInspectable const& sender, RangeBaseValueChangedEventArgs const&) {
+	const auto held = _resetHeldSlider.get();
+	if (!held || held != sender.try_as<Slider>()) return;
+	if (auto parameter = held.DataContext().try_as<Magpie::ScalingModeParameter>()) {
+		auto impl = get_self<ScalingModeParameter>(parameter);
+		impl->ResetToDefault();
+		if (held.Value() != impl->DefaultValue()) held.Value(impl->DefaultValue());
+	}
+}
+
+void ScalingModesPage::_ParameterSlider_Pressed(
+	IInspectable const& sender, PointerRoutedEventArgs const& args) {
+	const auto slider = sender.as<Slider>();
+	const auto point = args.GetCurrentPoint(slider);
+	const auto parameter = slider.DataContext().try_as<Magpie::ScalingModeParameter>();
+	if (point.PointerDevice().PointerDeviceType() != Windows::Devices::Input::PointerDeviceType::Mouse ||
+		!point.Properties().IsLeftButtonPressed() || (GetKeyState(VK_CONTROL) & 0x8000) ||
+		!slider.IsEnabled() || !parameter || !parameter.IsFloat() || !parameter.IsVisible()) {
+		_parameterResetGesture.Clear();
+		return;
+	}
+	if (!_parameterResetGesture.Press(reinterpret_cast<uintptr_t>(get_abi(slider)),
+		point.Timestamp(), point.Position().X, point.Position().Y, 4.0f)) return;
+
+	// Take over the second press from the Thumb. Keep its value fixed until up.
+	_resetHeldSlider = slider;
+	_capturingResetPointer = true;
+	slider.CapturePointer(args.Pointer());
+	_capturingResetPointer = false;
+	auto impl = get_self<ScalingModeParameter>(parameter);
+	impl->ResetToDefault();
+	slider.Value(impl->DefaultValue());
+	args.Handled(true);
+}
+
+void ScalingModesPage::_ParameterSlider_Moved(
+	IInspectable const& sender, PointerRoutedEventArgs const& args) {
+	const auto point = args.GetCurrentPoint(sender.as<Slider>());
+	_parameterResetGesture.Move(point.Position().X, point.Position().Y, 4.0f);
+	if (_resetHeldSlider.get() == sender.try_as<Slider>()) args.Handled(true);
+}
+
+void ScalingModesPage::_ParameterSlider_Released(
+	IInspectable const& sender, PointerRoutedEventArgs const& args) {
+	const auto slider = sender.as<Slider>();
+	const auto point = args.GetCurrentPoint(slider);
+	_parameterResetGesture.Move(point.Position().X, point.Position().Y, 4.0f);
+	_parameterResetGesture.Release();
+	if (_resetHeldSlider.get() == slider) {
+		ParameterSlider_ValueChanged(sender, nullptr);
+		_resetHeldSlider = {};
+		slider.ReleasePointerCapture(args.Pointer());
+		args.Handled(true);
+	}
+}
+
+void ScalingModesPage::_ParameterSlider_Canceled(
+	IInspectable const& sender, PointerRoutedEventArgs const&) {
+	ParameterSlider_ValueChanged(sender, nullptr);
+	_parameterResetGesture.Clear();
+	_resetHeldSlider = {};
+}
+
+void ScalingModesPage::_ParameterSlider_CaptureLost(
+	IInspectable const& sender, PointerRoutedEventArgs const& args) {
+	// Releasing capture after a normal button-up is not an interrupted click.
+	if (_capturingResetPointer ||
+		!args.GetCurrentPoint(nullptr).Properties().IsLeftButtonPressed()) return;
+	_ParameterSlider_Canceled(sender, args);
+}
+
 void ScalingModesPage::EffectSettingsCard_Loaded(IInspectable const& sender, RoutedEventArgs const&) {
 	XamlHelper::UpdateThemeOfTooltips(sender.try_as<DependencyObject>(), ActualTheme());
+}
+
+void ScalingModesPage::EffectParametersFlyout_Opening(
+	IInspectable const& sender,
+	IInspectable const&
+) {
+	Flyout flyout = sender.try_as<Flyout>();
+	ContentControl content = flyout ? flyout.Content().try_as<ContentControl>() : nullptr;
+	winrt::Magpie::EffectParametersViewModel parameters = content ?
+		content.Content().try_as<winrt::Magpie::EffectParametersViewModel>() : nullptr;
+	if (!parameters || !XamlRoot()) return;
+
+	// Leave room for presenter chrome and the root-bound popup margins. The
+	// view model keeps every visible group on screen by shrinking all columns
+	// together when the ideal 260-DIP layout cannot fit.
+	constexpr double FLYOUT_CHROME_AND_MARGIN = 72.0;
+	get_self<EffectParametersViewModel>(parameters)->UpdateLayoutWidth(
+		std::max(0.0, XamlRoot().Size().Width - FLYOUT_CHROME_AND_MARGIN));
 }
 
 void ScalingModesPage::AddEffectButton_Click(IInspectable const& sender, RoutedEventArgs const&) {
 	Button btn = sender.try_as<Button>();
 	_curScalingMode = get_self<ScalingModeItem>(btn.Tag().try_as<winrt::Magpie::ScalingModeItem>());
+	_RefreshEffectMenuAvailability();
 	_addEffectMenuFlyout.ShowAt(btn);
 }
 
-void ScalingModesPage::NewScalingModeFlyout_Opening(IInspectable const&, IInspectable const&) {
-	_viewModel->PrepareForAdd();
-}
-
-void ScalingModesPage::NewScalingModeNameTextBox_KeyDown(IInspectable const&, KeyRoutedEventArgs const& args) {
-	if (args.Key() == VirtualKey::Enter) {
-		if (_viewModel->IsAddButtonEnabled()) {
-			NewScalingModeConfirmButton_Click(nullptr, nullptr);
-		}
-	}
-}
-
-void ScalingModesPage::NewScalingModeConfirmButton_Click(IInspectable const&, RoutedEventArgs const&) {
-	NewScalingModeFlyout().Hide();
+void ScalingModesPage::NewScalingModeButton_Click(IInspectable const&, RoutedEventArgs const&) {
 	_viewModel->AddScalingMode();
 }
 
-void ScalingModesPage::ScalingModeMoreOptionsButton_Click(IInspectable const& sender, RoutedEventArgs const&) {
-	_moreOptionsButton = sender;
+fire_and_forget ScalingModesPage::ResetScalingModesButton_Click(
+	IInspectable const&,
+	RoutedEventArgs const&) {
+	if (ContentDialogHelper::IsAnyDialogOpen()) {
+		co_return;
+	}
+
+	ResourceLoader resourceLoader =
+		ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
+	ContentDialog dialog;
+	dialog.XamlRoot(XamlRoot());
+	dialog.RequestedTheme(ActualTheme());
+	dialog.Title(box_value(resourceLoader.GetString(L"ScalingModes_ResetDialog_Title")));
+	dialog.Content(box_value(resourceLoader.GetString(L"ScalingModes_ResetDialog_Content")));
+	dialog.PrimaryButtonText(resourceLoader.GetString(L"ScalingModes_ResetDialog_Confirm"));
+	dialog.CloseButtonText(resourceLoader.GetString(L"ScalingModes_ResetDialog_Cancel"));
+	dialog.DefaultButton(ContentDialogButton::Close);
+
+	if (co_await ContentDialogHelper::ShowAsync(dialog) == ContentDialogResult::Primary) {
+		ScalingModesService::Get().ResetScalingModes();
+	}
 }
 
-void ScalingModesPage::RemoveScalingModeMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&) {
-	MenuFlyoutItem menuItem = sender.try_as<MenuFlyoutItem>();
-	ScalingModeItem* scalingModeItem = get_self<ScalingModeItem>(menuItem.Tag().try_as<winrt::Magpie::ScalingModeItem>());
+void ScalingModesPage::ScalingModeRenameButton_Loaded(
+	IInspectable const& sender,
+	RoutedEventArgs const&) {
+	Button button = sender.try_as<Button>();
+	_QueueAutoRename(button, button.DataContext());
+}
+
+void ScalingModesPage::ScalingModeRenameButton_DataContextChanged(
+	FrameworkElement const& sender,
+	DataContextChangedEventArgs const& args) {
+	_QueueAutoRename(sender.try_as<Button>(), args.NewValue());
+}
+
+void ScalingModesPage::_QueueAutoRename(
+	Button const& button,
+	IInspectable const& candidateItem) noexcept {
+	if (!button || !button.IsLoaded()) {
+		return;
+	}
+
+	winrt::Magpie::ScalingModeItem item =
+		candidateItem.try_as<winrt::Magpie::ScalingModeItem>();
+	if (!item) {
+		return;
+	}
+
+	weak_ref<Button> weakButton(button);
+	App::Get().Dispatcher().TryEnqueue(DispatcherQueuePriority::Low, [weakButton, item]() {
+		Button currentButton = weakButton.get();
+		if (!currentButton || !currentButton.IsLoaded()) {
+			return;
+		}
+
+		winrt::Magpie::ScalingModeItem currentItem =
+			currentButton.DataContext().try_as<winrt::Magpie::ScalingModeItem>();
+		if (!currentItem || currentItem != item) {
+			return;
+		}
+
+		ScalingModeItem* itemImpl = get_self<ScalingModeItem>(item);
+		if (!itemImpl->TakeAutoRenameRequest()) {
+			return;
+		}
+
+		try {
+			currentButton.Flyout().ShowAt(currentButton);
+		} catch (...) {
+			// The item can be removed or recycled before the queued callback runs.
+			// In that case, opening the rename flyout is best-effort.
+		}
+	});
+}
+
+void ScalingModesPage::RenameTextBox_Loaded(IInspectable const& sender, RoutedEventArgs const&) {
+	TextBox textBox = sender.try_as<TextBox>();
+	textBox.Focus(FocusState::Programmatic);
+	textBox.SelectAll();
+}
+
+void ScalingModesPage::RemoveScalingModeButton_Click(IInspectable const& sender, RoutedEventArgs const&) {
+	Button button = sender.try_as<Button>();
+	ScalingModeItem* scalingModeItem = get_self<ScalingModeItem>(
+		button.Tag().try_as<winrt::Magpie::ScalingModeItem>());
 	if (scalingModeItem->IsInUse()) {
 		// 如果有缩放配置正在使用此缩放模式则弹出确认弹窗
-		FlyoutBase::GetAttachedFlyout(menuItem)
-			.ShowAt(_moreOptionsButton.try_as<FrameworkElement>());
+		FlyoutBase::GetAttachedFlyout(button).ShowAt(button);
 	} else {
 		scalingModeItem->Remove();
+	}
+}
+
+ListView ScalingModesPage::_FindParentListView(DependencyObject const& element) const noexcept {
+	DependencyObject current = VisualTreeHelper::GetParent(element);
+	while (current) {
+		if (ListView listView = current.try_as<ListView>()) {
+			return listView;
+		}
+		current = VisualTreeHelper::GetParent(current);
+	}
+
+	return nullptr;
+}
+
+uint32_t ScalingModesPage::_GetReorderTargetIndex(double pointerY) const noexcept {
+	if (!_reorderListView || !_reorderItems || !_reorderItem) {
+		return 0;
+	}
+
+	if (_reorderOriginalIndex >= _reorderItems.Size() ||
+		_reorderItemCenters.size() != _reorderItems.Size()) {
+		return _reorderOriginalIndex;
+	}
+
+	try {
+		uint32_t targetIndex = 0;
+		bool foundContainer = false;
+		const uint32_t size = _reorderItems.Size();
+		for (uint32_t i = 0; i < size; ++i) {
+			if (i == _reorderOriginalIndex) {
+				continue;
+			}
+
+			const double centerY = _reorderItemCenters[i];
+			if (!std::isfinite(centerY)) {
+				continue;
+			}
+
+			foundContainer = true;
+			if (pointerY < centerY) {
+				break;
+			}
+			++targetIndex;
+		}
+
+		return foundContainer ? std::min(targetIndex, size - 1) : _reorderOriginalIndex;
+	} catch (...) {
+		return _reorderOriginalIndex;
+	}
+}
+
+void ScalingModesPage::_PrepareReorderPreview() noexcept {
+	_reorderPreviewItems.clear();
+	_reorderItemCenters.clear();
+	_reorderSlotExtent = 0;
+
+	if (!_reorderListView || !_reorderItems || !_reorderContainer) {
+		return;
+	}
+
+	try {
+		const uint32_t size = _reorderItems.Size();
+		_reorderPreviewItems.reserve(size > 0 ? size - 1 : 0);
+		_reorderItemCenters.assign(size, std::numeric_limits<double>::quiet_NaN());
+
+		double draggedTop = 0;
+		double nextTop = 0;
+		bool hasDraggedTop = false;
+		bool hasNextTop = false;
+
+		for (uint32_t i = 0; i < size; ++i) {
+			FrameworkElement container =
+				_reorderListView.ContainerFromIndex(i).try_as<FrameworkElement>();
+			if (!container) {
+				continue;
+			}
+
+			const Point topLeft =
+				container.TransformToVisual(_reorderListView).TransformPoint({});
+			_reorderItemCenters[i] = topLeft.Y + container.ActualHeight() / 2;
+
+			if (i == _reorderOriginalIndex) {
+				draggedTop = topLeft.Y;
+				hasDraggedTop = true;
+				continue;
+			}
+			if (i == _reorderOriginalIndex + 1) {
+				nextTop = topLeft.Y;
+				hasNextTop = true;
+			}
+
+			ReorderPreviewItem preview;
+			preview.index = i;
+			preview.container = container;
+			preview.originalRenderTransform = container.RenderTransform();
+			preview.previewTransform = CompositeTransform();
+
+			TransformGroup transforms;
+			if (preview.originalRenderTransform) {
+				transforms.Children().Append(preview.originalRenderTransform);
+			}
+			transforms.Children().Append(preview.previewTransform);
+			container.RenderTransform(transforms);
+			_reorderPreviewItems.emplace_back(std::move(preview));
+		}
+
+		if (hasDraggedTop && hasNextTop && nextTop > draggedTop) {
+			_reorderSlotExtent = static_cast<float>(nextTop - draggedTop);
+		} else {
+			const Thickness margin = _reorderContainer.Margin();
+			_reorderSlotExtent = static_cast<float>(
+				_reorderContainer.ActualHeight() + margin.Top + margin.Bottom);
+		}
+	} catch (...) {
+		_ClearReorderPreview();
+	}
+}
+
+void ScalingModesPage::_UpdateReorderPreview(uint32_t targetIndex) noexcept {
+	if (_reorderSlotExtent <= 0) {
+		return;
+	}
+
+	try {
+		for (const ReorderPreviewItem& preview : _reorderPreviewItems) {
+			double offset = 0;
+			if (_reorderOriginalIndex < targetIndex &&
+				preview.index > _reorderOriginalIndex && preview.index <= targetIndex) {
+				offset = -_reorderSlotExtent;
+			} else if (targetIndex < _reorderOriginalIndex &&
+				preview.index >= targetIndex && preview.index < _reorderOriginalIndex) {
+				offset = _reorderSlotExtent;
+			}
+
+			preview.previewTransform.TranslateY(offset);
+		}
+	} catch (...) {
+		// Containers can be unrealized if the list scrolls during a drag. The next
+		// pointer event will continue updating the remaining realized containers.
+	}
+}
+
+void ScalingModesPage::_ClearReorderPreview() noexcept {
+	for (const ReorderPreviewItem& preview : _reorderPreviewItems) {
+		try {
+			preview.container.RenderTransform(preview.originalRenderTransform);
+		} catch (...) {
+		}
+	}
+
+	_reorderPreviewItems.clear();
+	_reorderItemCenters.clear();
+	_reorderSlotExtent = 0;
+}
+
+void ScalingModesPage::_QueueFinishReorder(bool commit) noexcept {
+	if (!_reorderHandle) {
+		return;
+	}
+
+	// PointerCaptureLost is normally raised after PointerReleased. Once a valid
+	// release has requested a commit, the later capture-lost notification must not
+	// turn it into a cancellation.
+	_queuedReorderCommit = _queuedReorderCommit || commit;
+	if (_isReorderFinishQueued) {
+		return;
+	}
+
+	_isReorderFinishQueued = true;
+	const uint32_t pointerId = _reorderPointerId;
+	try {
+		weak_ref<ScalingModesPage> weakThis = get_weak();
+		if (App::Get().Dispatcher().TryEnqueue(
+			DispatcherQueuePriority::Low,
+			[weakThis, pointerId]() {
+				com_ptr<ScalingModesPage> self = weakThis.get();
+				if (!self || !self->_isReorderFinishQueued ||
+					self->_reorderPointerId != pointerId) {
+					return;
+				}
+
+				const bool shouldCommit = std::exchange(self->_queuedReorderCommit, false);
+				self->_isReorderFinishQueued = false;
+				self->_FinishReorder(shouldCommit);
+			})) {
+			return;
+		}
+	} catch (...) {
+	}
+
+	// Dispatch only fails during shutdown. Do not touch XAML objects from the
+	// current input callback; the page teardown will release the references.
+	_isReorderFinishQueued = false;
+	_queuedReorderCommit = false;
+}
+
+void ScalingModesPage::_FinishReorder(bool commit) noexcept {
+	FrameworkElement container = std::exchange(_reorderContainer, nullptr);
+	IObservableVector<IInspectable> items = std::exchange(_reorderItems, nullptr);
+	IInspectable item = std::exchange(_reorderItem, nullptr);
+	const uint32_t targetIndex = _reorderTargetIndex;
+	const bool wasDragging = _isReorderDragging;
+
+	if (commit && wasDragging && items && item) {
+		try {
+			uint32_t currentIndex = 0;
+			if (items.IndexOf(item, currentIndex) && currentIndex != targetIndex) {
+				// Keep the preview transforms until the reordered collection has completed
+				// its layout. Clearing them first exposes the old slots for one rendered
+				// frame, the same release-time twitch fixed in the profile list.
+				items.RemoveAt(currentIndex);
+				items.InsertAt(std::min(targetIndex, items.Size()), item);
+				if (_reorderListView) {
+					_reorderListView.UpdateLayout();
+				}
+			}
+		} catch (...) {
+			// The page may be closing while the pointer is captured. In that case the
+			// collection or its item can already be detached, so cancel the reorder.
+		}
+	}
+
+	_ClearReorderPreview();
+
+	if (container) {
+		try {
+			container.RenderTransform(_originalRenderTransform);
+			container.Opacity(_originalOpacity);
+			Canvas::SetZIndex(container, _originalZIndex);
+		} catch (...) {
+			// The container may have been unrealized while completion was queued.
+		}
+	}
+
+	_reorderHandle = nullptr;
+	_reorderListView = nullptr;
+	_originalRenderTransform = nullptr;
+	_dragTransform = nullptr;
+	_reorderPointerId = 0;
+	_reorderOriginalIndex = 0;
+	_isReorderDragging = false;
+	_isReorderFinishQueued = false;
+	_queuedReorderCommit = false;
+}
+
+void ScalingModesPage::ReorderHandle_PointerPressed(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	try {
+		FrameworkElement handle = sender.try_as<FrameworkElement>();
+		if (_reorderHandle || !handle || !handle.Tag()) {
+			return;
+		}
+
+		auto pointerPoint = args.GetCurrentPoint(handle);
+		if (pointerPoint.PointerDevice().PointerDeviceType() ==
+			Windows::Devices::Input::PointerDeviceType::Mouse &&
+			!pointerPoint.Properties().IsLeftButtonPressed()) {
+			return;
+		}
+
+		ListView listView = _FindParentListView(handle);
+		if (!listView) {
+			return;
+		}
+
+		IObservableVector<IInspectable> items =
+			listView.ItemsSource().try_as<IObservableVector<IInspectable>>();
+		uint32_t itemIndex = 0;
+		if (!items || items.Size() < 2 || !items.IndexOf(handle.Tag(), itemIndex)) {
+			return;
+		}
+
+		FrameworkElement container =
+			listView.ContainerFromIndex(itemIndex).try_as<FrameworkElement>();
+		if (!container || !handle.CapturePointer(args.Pointer())) {
+			return;
+		}
+
+		_reorderHandle = handle;
+		_reorderContainer = container;
+		_reorderListView = listView;
+		_reorderItems = items;
+		_reorderItem = handle.Tag();
+		_reorderOriginalIndex = itemIndex;
+		_originalRenderTransform = container.RenderTransform();
+		_originalOpacity = container.Opacity();
+		_originalZIndex = Canvas::GetZIndex(container);
+		_dragTransform = CompositeTransform();
+
+		TransformGroup transforms;
+		if (_originalRenderTransform) {
+			transforms.Children().Append(_originalRenderTransform);
+		}
+		transforms.Children().Append(_dragTransform);
+		container.RenderTransform(transforms);
+		container.Opacity(0.92);
+		Canvas::SetZIndex(container, 1000);
+		_PrepareReorderPreview();
+
+		_pointerStartY = args.GetCurrentPoint(listView).Position().Y;
+		_reorderTargetIndex = itemIndex;
+		_reorderPointerId = args.Pointer().PointerId();
+		_isReorderDragging = false;
+		args.Handled(true);
+	} catch (const hresult_error& e) {
+		Logger::Get().ComWarn("启动拖拽失败", e.code());
+		_QueueFinishReorder(false);
+	} catch (...) {
+		Logger::Get().Warn("启动拖拽失败");
+		_QueueFinishReorder(false);
+	}
+}
+
+void ScalingModesPage::ReorderHandle_PointerMoved(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	try {
+		if (!_reorderHandle || sender != _reorderHandle ||
+			args.Pointer().PointerId() != _reorderPointerId) {
+			return;
+		}
+
+		const double pointerY = args.GetCurrentPoint(_reorderListView).Position().Y;
+		const double deltaY = pointerY - _pointerStartY;
+		if (!_isReorderDragging && std::abs(deltaY) >= 3) {
+			_isReorderDragging = true;
+		}
+
+		if (_isReorderDragging) {
+			_dragTransform.TranslateY(deltaY);
+			const uint32_t targetIndex = _GetReorderTargetIndex(pointerY);
+			if (targetIndex != _reorderTargetIndex) {
+				_reorderTargetIndex = targetIndex;
+				_UpdateReorderPreview(targetIndex);
+			}
+		}
+		args.Handled(true);
+	} catch (const hresult_error& e) {
+		Logger::Get().ComWarn("更新拖拽位置失败", e.code());
+		_QueueFinishReorder(false);
+	} catch (...) {
+		Logger::Get().Warn("更新拖拽位置失败");
+		_QueueFinishReorder(false);
+	}
+}
+
+void ScalingModesPage::ReorderHandle_PointerReleased(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	try {
+		if (!_reorderHandle || sender != _reorderHandle ||
+			args.Pointer().PointerId() != _reorderPointerId) {
+			return;
+		}
+
+		args.Handled(true);
+		_QueueFinishReorder(true);
+	} catch (const hresult_error& e) {
+		Logger::Get().ComWarn("完成拖拽失败", e.code());
+		_QueueFinishReorder(false);
+	} catch (...) {
+		Logger::Get().Warn("完成拖拽失败");
+		_QueueFinishReorder(false);
+	}
+}
+
+void ScalingModesPage::ReorderHandle_PointerCanceled(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	try {
+		if (!_reorderHandle || sender != _reorderHandle ||
+			args.Pointer().PointerId() != _reorderPointerId) {
+			return;
+		}
+
+		args.Handled(true);
+		_QueueFinishReorder(false);
+	} catch (const hresult_error& e) {
+		Logger::Get().ComWarn("取消拖拽失败", e.code());
+		_QueueFinishReorder(false);
+	} catch (...) {
+		Logger::Get().Warn("取消拖拽失败");
+		_QueueFinishReorder(false);
+	}
+}
+
+void ScalingModesPage::ReorderHandle_PointerCaptureLost(
+	IInspectable const& sender,
+	PointerRoutedEventArgs const& args) {
+	try {
+		if (_reorderHandle && sender == _reorderHandle &&
+			args.Pointer().PointerId() == _reorderPointerId) {
+			_QueueFinishReorder(false);
+		}
+	} catch (const hresult_error& e) {
+		Logger::Get().ComWarn("处理拖拽捕获丢失失败", e.code());
+		_QueueFinishReorder(false);
+	} catch (...) {
+		Logger::Get().Warn("处理拖拽捕获丢失失败");
+		_QueueFinishReorder(false);
 	}
 }
 
@@ -88,7 +710,7 @@ void ScalingModesPage::_BuildEffectMenu() noexcept {
 			continue;
 		}
 
-		item.Text(name.substr(delimPos + 1));
+		item.Text(EffectHelper::GetDisplayName(name));
 
 		std::wstring_view dir = name.substr(0, delimPos);
 		auto it = folders.find(dir);
@@ -144,6 +766,32 @@ void ScalingModesPage::_BuildEffectMenu() noexcept {
 
 	for (MenuFlyoutItemBase& item : rootItems) {
 		_addEffectMenuFlyout.Items().Append(std::move(item));
+	}
+}
+
+void ScalingModesPage::_RefreshEffectMenuAvailability() noexcept {
+	if (!_curScalingMode) {
+		return;
+	}
+
+	auto updateItem = [this](const MenuFlyoutItemBase& itemBase) noexcept {
+		const MenuFlyoutItem item = itemBase.try_as<MenuFlyoutItem>();
+		if (!item || !item.Tag()) {
+			return;
+		}
+		item.IsEnabled(_curScalingMode->CanAddEffect(
+			unbox_value<hstring>(item.Tag())));
+	};
+
+	for (const MenuFlyoutItemBase& rootItem : _addEffectMenuFlyout.Items()) {
+		if (const MenuFlyoutSubItem folder =
+			rootItem.try_as<MenuFlyoutSubItem>()) {
+			for (const MenuFlyoutItemBase& item : folder.Items()) {
+				updateItem(item);
+			}
+		} else {
+			updateItem(rootItem);
+		}
 	}
 }
 

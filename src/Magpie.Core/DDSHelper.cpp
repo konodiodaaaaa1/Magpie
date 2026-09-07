@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "DDSHelper.h"
+#include "TextureHelper.h"
 #include "DDS.h"
 #include "Logger.h"
 
@@ -955,13 +956,15 @@ static bool SaveToDDSFile(
 	uint32_t height,
 	DXGI_FORMAT format,
 	std::span<uint8_t> pixelData,
-	uint32_t rowPitch
+	uint32_t rowPitch,
+	TextureSaveError* error
 ) noexcept {
 	// 创建 DDS 头
 	uint8_t header[DDS_DX10_HEADER_SIZE];
 	uint32_t ddsRowPitch;
 	uint32_t ddsSlicePitch;
 	if (!EncodeDDSHeader(width, height, format, header, ddsRowPitch, ddsSlicePitch)) {
+		if (error) error->code = E_INVALIDARG;
 		Logger::Get().Error("EncodeDDSHeader 失败");
 		return false;
 	}
@@ -971,42 +974,45 @@ static bool SaveToDDSFile(
 		GENERIC_WRITE | DELETE, 0, CREATE_ALWAYS, nullptr)
 	);
 	if (!hFile) {
+		if (error) {
+			const DWORD code = GetLastError();
+			error->fileWriteFailed = true;
+			error->code = HRESULT_FROM_WIN32(code ? code : ERROR_WRITE_FAULT);
+		}
 		Logger::Get().Win32Error("CreateFile2 失败");
 		return false;
 	}
 
-	DWORD bytesWritten;
-	if (!WriteFile(hFile.get(), header, (DWORD)DDS_DX10_HEADER_SIZE, &bytesWritten, nullptr) ||
-		bytesWritten != DDS_DX10_HEADER_SIZE) {
-		Logger::Get().Win32Error("WriteFile 失败");
+	auto write = [&](const void* data, DWORD length) {
+		DWORD bytesWritten = 0;
+		const BOOL succeeded = WriteFile(hFile.get(), data, length, &bytesWritten, nullptr);
+		if (succeeded && bytesWritten == length) return true;
+		const DWORD code = succeeded ? ERROR_WRITE_FAULT : GetLastError();
+		if (error) {
+			error->fileWriteFailed = true;
+			error->code = HRESULT_FROM_WIN32(code);
+		}
+		Logger::Get().Error(fmt::format("Writing DDS failed: {}", code));
 		return false;
-	}
-
-	// 写入图像
-	if ((uint32_t)pixelData.size() == ddsSlicePitch) {
-		if (!WriteFile(hFile.get(), pixelData.data(), (DWORD)ddsSlicePitch, &bytesWritten, nullptr) ||
-			bytesWritten != ddsSlicePitch) {
-			Logger::Get().Win32Error("WriteFile 失败");
-			return false;
-		}
+	};
+	if (!write(header, static_cast<DWORD>(DDS_DX10_HEADER_SIZE))) return false;
+	if (pixelData.size() == ddsSlicePitch) {
+		if (!write(pixelData.data(), ddsSlicePitch)) return false;
 	} else {
-		if (rowPitch < ddsRowPitch) {
-			// DDS 使用字节对齐，所以肯定是 rowPitch 错误
-			Logger::Get().Win32Error("rowPitch 参数非法");
+		if (rowPitch < ddsRowPitch || pixelData.size() < size_t(rowPitch) * height) {
+			if (error) error->code = E_INVALIDARG;
+			Logger::Get().Error("Invalid DDS row pitch or pixel buffer");
 			return false;
 		}
-
-		const uint8_t* __restrict sPtr = pixelData.data();
-
 		for (uint32_t i = 0; i < height; ++i) {
-			if (!WriteFile(hFile.get(), sPtr, (DWORD)ddsRowPitch, &bytesWritten, nullptr) ||
-				bytesWritten != ddsRowPitch) {
-				Logger::Get().Win32Error("WriteFile 失败");
-				return false;
-			}
-
-			sPtr += rowPitch;
+			if (!write(pixelData.data() + size_t(i) * rowPitch, ddsRowPitch)) return false;
 		}
+	}
+	if (!FlushFileBuffers(hFile.get())) {
+		const DWORD code = GetLastError();
+		if (error) { error->fileWriteFailed = true; error->code = HRESULT_FROM_WIN32(code); }
+		Logger::Get().Error(fmt::format("Flushing DDS failed: {}", code));
+		return false;
 	}
 
 	return true;
@@ -1036,9 +1042,10 @@ bool DDSHelper::Save(
 	uint32_t height,
 	DXGI_FORMAT format,
 	std::span<uint8_t> pixelData,
-	uint32_t rowPitch
+	uint32_t rowPitch,
+	TextureSaveError* error
 ) {
-	if (!SaveToDDSFile(fileName, width, height, format, pixelData, rowPitch)) {
+	if (!SaveToDDSFile(fileName, width, height, format, pixelData, rowPitch, error)) {
 		DeleteFile(fileName);
 		return false;
 	}

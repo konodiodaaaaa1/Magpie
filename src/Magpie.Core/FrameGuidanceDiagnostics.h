@@ -5,21 +5,27 @@ namespace Magpie {
 
 enum class FrameGuidanceDiagnosticKind : uint8_t {
 	Motion,
-	Confidence,
-	Depth,
-	DepthResidual
+	Confidence
 };
 
 struct FrameGuidanceDiagnosticSettings {
 	FrameGuidanceDiagnosticKind kind = FrameGuidanceDiagnosticKind::Motion;
-	float gain = 1.0f;
-	bool invert = false;
-	bool showRawDepth = false;
+	float gain = 0.08f;
 };
 
 class FrameGuidanceDiagnostics final : public NativeEffectBackend {
 public:
 	FrameGuidanceRequirements GetFrameGuidanceRequirements() const noexcept override;
+	EffectParameterApplyMode GetParameterApplyMode(
+		std::string_view parameterName
+	) const noexcept override;
+	EffectParameterRestartReason GetParameterRestartReason(
+		std::string_view parameterName
+	) const noexcept override;
+	bool ApplyLiveParameters(
+		const EffectOption& option,
+		std::span<const std::string> parameterNames
+	) noexcept override;
 	bool Initialize(
 		DeviceResources& resources,
 		ID3D11Texture2D* input,

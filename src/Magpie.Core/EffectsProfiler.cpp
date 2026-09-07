@@ -1,121 +1,165 @@
 #include "pch.h"
 #include "EffectsProfiler.h"
+#include "Logger.h"
 
 namespace Magpie {
 
 void EffectsProfiler::Start(ID3D11Device* d3dDevice, uint32_t passCount) noexcept {
-	assert(!IsProfiling() && passCount > 0);
-
-	_passQueries.resize(passCount);
-
-	D3D11_QUERY_DESC desc{ .Query = D3D11_QUERY_TIMESTAMP_DISJOINT };
-	d3dDevice->CreateQuery(&desc, _disjointQuery.put());
-
-	desc.Query = D3D11_QUERY_TIMESTAMP;
-	d3dDevice->CreateQuery(&desc, _startQuery.put());
-	for (winrt::com_ptr<ID3D11Query>& query : _passQueries) {
-		d3dDevice->CreateQuery(&desc, query.put());
+	if (IsProfiling()) return;
+	if (!passCount) {
+		_Disable("Effects profiler: no passes", E_INVALIDARG);
+		return;
 	}
+	for (QuerySlot& slot : _slots) {
+		slot.passes.resize(passCount);
+		D3D11_QUERY_DESC desc{ .Query = D3D11_QUERY_TIMESTAMP_DISJOINT };
+		HRESULT hr = d3dDevice->CreateQuery(&desc, slot.disjoint.put());
+		if (FAILED(hr)) {
+			_Disable("Effects profiler: create disjoint query", hr);
+			return;
+		}
+		desc.Query = D3D11_QUERY_TIMESTAMP;
+		hr = d3dDevice->CreateQuery(&desc, slot.start.put());
+		if (FAILED(hr)) {
+			_Disable("Effects profiler: create start query", hr);
+			return;
+		}
+		for (auto& query : slot.passes) {
+			hr = d3dDevice->CreateQuery(&desc, query.put());
+			if (FAILED(hr)) {
+				_Disable("Effects profiler: create pass query", hr);
+				return;
+			}
+		}
+	}
+	_passCount = passCount;
+	Logger::Get().Info(fmt::format("Effects profiler started: passes={} querySlots={}",
+		passCount, _slots.size()));
 }
 
 void EffectsProfiler::Stop() noexcept {
-	_disjointQuery = nullptr;
-	_startQuery = nullptr;
-	_passQueries.clear();
+	if (_passCount) Logger::Get().Info(fmt::format(
+		"Effects profiler stopped: skippedSamples={} pending={}", _skippedSamples, _pendingCount));
+	_slots = {};
+	_passCount = _readSlot = _writeSlot = _pendingCount = _curPass = 0;
+	_skippedSamples = 0;
+	_recording = false;
+	auto lock = _timingsLock.lock_exclusive();
+	_timings.clear();
 }
 
 bool EffectsProfiler::IsProfiling() const noexcept {
-	return (bool)_disjointQuery;
+	return _passCount != 0;
 }
 
 void EffectsProfiler::SetPassCount(ID3D11Device* d3dDevice, uint32_t passCount) noexcept {
-	if (!IsProfiling()) {
-		return;
-	}
-
-	assert(passCount > 0);
-	const uint32_t oldPassCount = (uint32_t)_passQueries.size();
-
-	if (passCount == oldPassCount) {
-		return;
-	}
-
-	_passQueries.resize(passCount);
-	
-	if (passCount > oldPassCount) {
-		D3D11_QUERY_DESC desc{ .Query = D3D11_QUERY_TIMESTAMP };
-		for (uint32_t i = oldPassCount; i < passCount; ++i) {
-			d3dDevice->CreateQuery(&desc, _passQueries[i].put());
-		}
-	}
+	if (!IsProfiling() || passCount == _passCount) return;
+	// Called between frames. Retire old queries rather than resize pending slots
+	// whose timestamps still describe the previous effect chain.
+	Stop();
+	Start(d3dDevice, passCount);
 }
 
 void EffectsProfiler::OnBeginEffects(ID3D11DeviceContext* d3dDC) noexcept {
-	if (!IsProfiling()) {
+	QueryTimings(d3dDC);
+	if (!IsProfiling()) return;
+	if (_pendingCount == _slots.size()) {
+		if (++_skippedSamples == 1) Logger::Get().Info(
+			"Effects profiler query slots busy; skipping samples while effects continue");
 		return;
 	}
-
-	d3dDC->Begin(_disjointQuery.get());
-	d3dDC->End(_startQuery.get());
-
+	QuerySlot& slot = _slots[_writeSlot];
+	d3dDC->Begin(slot.disjoint.get());
+	d3dDC->End(slot.start.get());
+	_recording = true;
 	_curPass = 0;
 }
 
 void EffectsProfiler::OnEndPass(ID3D11DeviceContext* d3dDC) noexcept {
-	if (!IsProfiling()) {
+	if (!_recording) return;
+	QuerySlot& slot = _slots[_writeSlot];
+	if (_curPass >= _passCount) {
+		d3dDC->End(slot.disjoint.get());
+		_Disable("Effects profiler: more passes than expected", E_UNEXPECTED);
 		return;
 	}
-
-	d3dDC->End(_passQueries[_curPass++].get());
+	d3dDC->End(slot.passes[_curPass++].get());
 }
 
 void EffectsProfiler::OnEndEffects(ID3D11DeviceContext* d3dDC) noexcept {
-	if (!IsProfiling()) {
+	if (!_recording) return;
+	QuerySlot& slot = _slots[_writeSlot];
+	d3dDC->End(slot.disjoint.get());
+	_recording = false;
+	if (_curPass != _passCount) {
+		_Disable("Effects profiler: fewer passes than expected", E_UNEXPECTED);
 		return;
 	}
-
-	d3dDC->End(_disjointQuery.get());
+	slot.submitted = std::chrono::steady_clock::now();
+	++_pendingCount;
+	_writeSlot = (_writeSlot + 1) % uint32_t(_slots.size());
+	// Normal texture publication submits these commands. GetData never flushes
+	// or waits; incomplete results remain in the slot for subsequent polls.
 }
 
-template <typename T>
-static T GetQueryData(ID3D11DeviceContext* d3dDC, ID3D11Query* query) noexcept {
-	T data{};
-	while (d3dDC->GetData(query, &data, sizeof(data), 0) != S_OK) {
-		Sleep(0);
+void EffectsProfiler::_Disable(const char* operation, HRESULT hr) noexcept {
+	Logger::Get().ComError(operation, hr);
+	Logger::Get().Warn("Effects GPU timing disabled for this profiling session; effects continue");
+	Stop();
+}
+
+bool EffectsProfiler::_ReadQuery(ID3D11DeviceContext* d3dDC, ID3D11Query* query,
+	void* data, UINT size, std::chrono::steady_clock::time_point submitted) noexcept {
+	const HRESULT hr = d3dDC->GetData(query, data, size, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+	if (hr == S_OK) return true;
+	if (hr == S_FALSE) {
+		if (std::chrono::steady_clock::now() - submitted >= 5s) {
+			_Disable("Effects profiler: GPU query timeout", HRESULT_FROM_WIN32(ERROR_TIMEOUT));
+		}
+	} else {
+		_Disable("Effects profiler: GetData failed", FAILED(hr) ? hr : E_UNEXPECTED);
 	}
-	return data;
+	return false;
 }
 
 void EffectsProfiler::QueryTimings(ID3D11DeviceContext* d3dDC) noexcept {
-	if (!IsProfiling()) {
-		return;
-	}
-
-	D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjointData =
-		GetQueryData<D3D11_QUERY_DATA_TIMESTAMP_DISJOINT>(d3dDC, _disjointQuery.get());
-
-	if (disjointData.Disjoint) {
-		return;
-	}
-
-	const float toMS = 1000.0f / disjointData.Frequency;
-
-	uint64_t prevTimestamp = GetQueryData<uint64_t>(d3dDC, _startQuery.get());
-
-	auto lock = _timingsLock.lock_exclusive();
-	_timings.resize(_passQueries.size());
-	for (size_t i = 0; i < _passQueries.size(); ++i) {
-		uint64_t timestamp = GetQueryData<uint64_t>(d3dDC, _passQueries[i].get());
-		_timings[i] = (timestamp - prevTimestamp) * toMS;
-
-		prevTimestamp = timestamp;
+	// At most three samples per call. A single incomplete query returns at once.
+	while (_pendingCount) {
+		QuerySlot& slot = _slots[_readSlot];
+		D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
+		if (!_ReadQuery(d3dDC, slot.disjoint.get(), &disjoint, sizeof(disjoint), slot.submitted)) return;
+		if (!disjoint.Disjoint) {
+			if (!disjoint.Frequency) {
+				_Disable("Effects profiler: zero timestamp frequency", E_UNEXPECTED);
+				return;
+			}
+			uint64_t previous = 0;
+			if (!_ReadQuery(d3dDC, slot.start.get(), &previous, sizeof(previous), slot.submitted)) return;
+			SmallVector<float> timings;
+			timings.resize(_passCount);
+			const double toMs = 1000.0 / double(disjoint.Frequency);
+			for (uint32_t i = 0; i < _passCount; ++i) {
+				uint64_t timestamp = 0;
+				if (!_ReadQuery(d3dDC, slot.passes[i].get(), &timestamp, sizeof(timestamp), slot.submitted)) return;
+				if (timestamp < previous) {
+					_Disable("Effects profiler: non-monotonic timestamp", E_UNEXPECTED);
+					return;
+				}
+				timings[i] = float(double(timestamp - previous) * toMs);
+				previous = timestamp;
+			}
+			// All GPU queries and validation are outside the frontend lock.
+			auto lock = _timingsLock.lock_exclusive();
+			_timings = std::move(timings);
+		}
+		// Completed disjoint samples are invalid but their slots can be reused.
+		--_pendingCount;
+		_readSlot = (_readSlot + 1) % uint32_t(_slots.size());
 	}
 }
 
 SmallVector<float> EffectsProfiler::GetTimings() noexcept {
 	auto lock = _timingsLock.lock_exclusive();
-
-	// 没有渲染新帧时 _timings 为空
 	SmallVector<float> result = std::move(_timings);
 	_timings.clear();
 	return result;

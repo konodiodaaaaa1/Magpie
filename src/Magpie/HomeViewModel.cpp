@@ -15,12 +15,23 @@
 #include "RootPage.h"
 #include "FileDialogHelper.h"
 #include "Logger.h"
+#include "ErrorService.h"
+#include "ContentDialogHelper.h"
+#include <winrt/Windows.ApplicationModel.DataTransfer.h>
 
 using namespace Magpie;
 
 namespace winrt::Magpie::implementation {
 
 HomeViewModel::HomeViewModel() {
+	_frameSyncChangedRevoker = AppSettings::Get().FrontEdgeSyncChanged(auto_revoke, [this] {
+		RaisePropertyChanged(L"IsFrontEdgeSyncEnabled");
+		RaisePropertyChanged(L"FrontEdgeSyncFrameRate");
+	});
+	_issueChangedRevoker = ErrorService::Get().Changed(auto_revoke, [this] {
+		RaisePropertyChanged(L"ShowRecentIssue");
+		RaisePropertyChanged(L"RecentIssueSummary");
+	});
 	ScalingService& ScalingService = ScalingService::Get();
 
 	_isScalingChangedRevoker = ScalingService.IsScalingChanged(
@@ -40,6 +51,66 @@ HomeViewModel::HomeViewModel() {
 			}
 		}
 	);
+}
+
+bool HomeViewModel::ShowRecentIssue() const noexcept {
+	return ErrorService::Get().IsIssueVisible();
+}
+
+void HomeViewModel::ShowRecentIssue(bool value) {
+	if (!value) ErrorService::Get().DismissIssue();
+}
+
+hstring HomeViewModel::RecentIssueSummary() const noexcept {
+	return ErrorService::Get().Summary();
+}
+
+fire_and_forget HomeViewModel::ShowRecentIssueDetails() noexcept {
+	try {
+		if (!ErrorService::Get().HasIssue() || ContentDialogHelper::IsAnyDialogOpen()) co_return;
+		const auto root = App::Get().RootPage();
+		if (!root) co_return;
+		const auto loader = ResourceLoader::GetForViewIndependentUse(CommonSharedConstants::APP_RESOURCE_MAP_ID);
+		// Capture the issue the user opened, even if another failure arrives.
+		const hstring details = ErrorService::Get().Details();
+		TextBox text;
+		text.Text(details);
+		text.IsReadOnly(true);
+		text.AcceptsReturn(true);
+		text.TextWrapping(TextWrapping::Wrap);
+		text.MaxHeight(400);
+		ScrollViewer::SetVerticalScrollBarVisibility(text, ScrollBarVisibility::Auto);
+		ContentDialog dialog;
+		dialog.XamlRoot(root->XamlRoot());
+		dialog.RequestedTheme(root->ActualTheme());
+		dialog.Title(box_value(loader.GetString(L"ErrorDetails_Title")));
+		dialog.Content(text);
+		dialog.PrimaryButtonText(loader.GetString(L"ErrorDetails_Copy"));
+		dialog.SecondaryButtonText(loader.GetString(L"ErrorDetails_OpenLogs"));
+		dialog.CloseButtonText(loader.GetString(L"ErrorDetails_Close"));
+		dialog.DefaultButton(ContentDialogButton::Close);
+		dialog.PrimaryButtonClick([details, loader](const ContentDialog& sender, const ContentDialogButtonClickEventArgs& args) {
+			args.Cancel(true);
+			try {
+				Windows::ApplicationModel::DataTransfer::DataPackage data;
+				data.SetText(details);
+				Windows::ApplicationModel::DataTransfer::Clipboard::SetContent(data);
+				sender.PrimaryButtonText(loader.GetString(L"ErrorDetails_Copied"));
+			} catch (...) {
+				sender.Title(box_value(loader.GetString(L"ErrorDetails_CopyFailed")));
+			}
+		});
+		dialog.SecondaryButtonClick([loader](const ContentDialog& sender, const ContentDialogButtonClickEventArgs& args) {
+			args.Cancel(true);
+			const auto path = Win32Helper::GetExePath().parent_path() / CommonSharedConstants::LOGS_DIR;
+			if (!Win32Helper::ShellOpen(path.c_str())) {
+				sender.Title(box_value(loader.GetString(L"ErrorDetails_OpenLogsFailed")));
+			}
+		});
+		co_await ContentDialogHelper::ShowAsync(dialog);
+	} catch (...) {
+		Logger::Get().Error("Unable to open error details dialog");
+	}
 }
 
 hstring HomeViewModel::TimerDescription() const noexcept {
@@ -361,6 +432,39 @@ void HomeViewModel::IsInlineParams(bool value) {
 
 	settings.IsInlineParams(value);
 	RaisePropertyChanged(L"IsInlineParams");
+}
+
+bool HomeViewModel::IsFrontEdgeSyncEnabled() const noexcept {
+	return AppSettings::Get().IsFrontEdgeSyncEnabled();
+}
+
+void HomeViewModel::IsFrontEdgeSyncEnabled(bool value) {
+	auto& settings = AppSettings::Get();
+	if (settings.IsFrontEdgeSyncEnabled() == value) return;
+	settings.IsFrontEdgeSyncEnabled(value);
+	RaisePropertyChanged(L"IsFrontEdgeSyncEnabled");
+}
+
+bool HomeViewModel::IsVRREnabled() const noexcept {
+	return AppSettings::Get().IsVRREnabled();
+}
+
+void HomeViewModel::IsVRREnabled(bool value) {
+	auto& settings = AppSettings::Get();
+	if (settings.IsVRREnabled() == value) return;
+	settings.IsVRREnabled(value);
+	RaisePropertyChanged(L"IsVRREnabled");
+}
+
+double HomeViewModel::FrontEdgeSyncFrameRate() const noexcept {
+	return AppSettings::Get().FrontEdgeSyncFrameRate();
+}
+
+void HomeViewModel::FrontEdgeSyncFrameRate(double value) {
+	// A cleared NumberBox reports NaN; leave the last valid setting intact.
+	if (!std::isfinite(value)) return;
+	AppSettings::Get().FrontEdgeSyncFrameRate(static_cast<float>(value));
+	RaisePropertyChanged(L"FrontEdgeSyncFrameRate");
 }
 
 static constexpr std::array MIN_FRAME_RATE_OPTIONS{ 0,5,10,15,20,30,60 };

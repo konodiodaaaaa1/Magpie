@@ -85,6 +85,9 @@ void Pass1(uint2 blockStart, uint3 threadId) {
 
 	const float2 inputPt = GetInputPt();
 	const float2 pos = ((gxy / 5) + 0.5f) * inputPt;
+	#ifdef MP_HDR_COMPATIBILITY
+	const float sourceAlpha = INPUT.SampleLevel(sam, pos, 0).a;
+	#endif
 
 	//    A1 B1 C1
 	// A0 A  B  C  C4
@@ -339,7 +342,7 @@ void Pass1(uint2 blockStart, uint3 threadId) {
 	for (uint i = 0; i < 5; ++i) {
 		[unroll]
 		for (uint j = 0; j < 5; ++j) {
-			OUTPUT[gxy + uint2(i, j)] = float4(dst[destIdx[j][i]], 1);
+			OUTPUT[gxy + uint2(i, j)] = float4(dst[destIdx[j][i]], MP_HDR_ALPHA);
 		}
 	}
 }

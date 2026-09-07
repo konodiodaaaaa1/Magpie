@@ -6,9 +6,13 @@ param(
     [string]$Version,
     [ValidateRange(1, 64)]
     [int]$MaxCpuCount = 2,
+    [ValidateRange(1, 64)]
+    [int]$MaxCompilerProcesses = 1,
     [switch]$AllowDirtySource,
-    [switch]$ExcludeTensorRTDepthRuntime,
-    [switch]$SkipBuild
+    [switch]$IncludeSymbols,
+    [switch]$SkipBuild,
+    [switch]$RequireMagpieClosed,
+    [switch]$EnableFrameTrace
 )
 
 $ErrorActionPreference = "Stop"
@@ -147,6 +151,7 @@ if (!$ReleaseDirectory) {
 }
 $releaseContainer = [System.IO.Path]::GetFullPath((Join-Path $releaseRoot $ReleaseDirectory))
 $stagingDir = [System.IO.Path]::GetFullPath((Join-Path $releaseContainer $PackageName))
+$symbolsDir = [System.IO.Path]::GetFullPath((Join-Path $releaseContainer "$PackageName-symbols"))
 $zipPath = [System.IO.Path]::GetFullPath((Join-Path $releaseContainer "$PackageName.zip"))
 
 if (!$releaseContainer.StartsWith($releaseRoot + [System.IO.Path]::DirectorySeparatorChar,
@@ -154,6 +159,8 @@ if (!$releaseContainer.StartsWith($releaseRoot + [System.IO.Path]::DirectorySepa
     throw "Release container escaped the release directory."
 }
 if (!$stagingDir.StartsWith($releaseContainer + [System.IO.Path]::DirectorySeparatorChar,
+        [System.StringComparison]::OrdinalIgnoreCase) -or
+    !$symbolsDir.StartsWith($releaseContainer + [System.IO.Path]::DirectorySeparatorChar,
         [System.StringComparison]::OrdinalIgnoreCase) -or
     !$zipPath.StartsWith($releaseContainer + [System.IO.Path]::DirectorySeparatorChar,
         [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -185,13 +192,35 @@ function Stop-RunningMagpie {
 # Magpie and its PRI must come from the same complete build. Stop the running
 # application before Rebuild so MSBuild never falls back to deploying a lone
 # replacement executable around a locked output directory.
-Stop-RunningMagpie
+if ($RequireMagpieClosed) {
+    if (Get-Process -Name 'Magpie' -ErrorAction SilentlyContinue) {
+        throw 'Magpie is running. Exit it normally before deploying; no process was terminated.'
+    }
+} else {
+    Stop-RunningMagpie
+}
 
 if (!$SkipBuild) {
+	# MSBuild Rebuild removes known project outputs but leaves arbitrary runtime
+	# files copied by older feature sets. Start from an empty configuration
+	# directory so removed optional components cannot leak into a new package.
+	$buildRoot = [System.IO.Path]::GetFullPath((Join-Path $sourceRoot "bin"))
+	if (!$buildOutput.StartsWith(
+		$buildRoot + [System.IO.Path]::DirectorySeparatorChar,
+		[System.StringComparison]::OrdinalIgnoreCase)) {
+		throw "Build output escaped the source bin directory: $buildOutput"
+	}
+	if (Test-Path -LiteralPath $buildOutput) {
+		Get-ChildItem -LiteralPath $buildOutput -Force |
+			Remove-Item -Recurse -Force
+	}
+
     $msbuild = Find-MSBuild
     Add-ConanToPath
     Add-CMakeToPath
 
+    $disablePdb = if ($IncludeSymbols) { "false" } else { "true" }
+    $multiToolTask = if ($MaxCompilerProcesses -gt 1) { "true" } else { "false" }
     $msbuildArgs = @(
         "Magpie.slnx", "/m:$MaxCpuCount", "/nr:false", "/v:minimal", "/t:Rebuild",
         "/p:Configuration=$Configuration", "/p:Platform=$Platform",
@@ -200,9 +229,17 @@ if (!$SkipBuild) {
         "/p:PatchVersion=$($versionMatch.Groups[3].Value)",
         "/p:VersionString=$Version", "/p:CommitId=$shortCommit",
         "/p:PreferredToolArchitecture=x64",
-        "/p:UseMultiToolTask=false", "/p:CL_MPCount=1",
-        "/p:DisablePDB=true", "/p:ReproducibleBuild=true"
+        "/p:UseMultiToolTask=$multiToolTask", "/p:CL_MPCount=$MaxCompilerProcesses",
+        "/p:MultiProcMaxCount=$MaxCompilerProcesses", "/p:EnforceProcessCountAcrossBuilds=true",
+        "/p:DisablePDB=$disablePdb", "/p:ReproducibleBuild=true"
     )
+    $traceEnabled = if ($EnableFrameTrace) { "true" } else { "false" }
+    $msbuildArgs += "/p:EnableFrameTrace=$traceEnabled"
+    if ($IncludeSymbols) {
+        $msbuildArgs += @(
+            "/p:GenerateReleaseSymbols=true"
+        )
+    }
 
     Push-Location $sourceRoot
     try {
@@ -230,6 +267,35 @@ if ($missingRuntimePaths.Count -ne 0) {
     throw "Release runtime layout is incomplete in $buildOutput. Missing: $($missingRuntimePaths -join ', ')"
 }
 
+if ($IncludeSymbols) {
+    $requiredSymbolPaths = @("Magpie.pdb", "Magpie.map")
+    $missingSymbolPaths = @($requiredSymbolPaths | Where-Object {
+        !(Test-Path -LiteralPath (Join-Path $buildOutput $_))
+    })
+    if ($missingSymbolPaths.Count -ne 0) {
+        throw "Required Magpie symbols were not generated in $buildOutput. Missing: $($missingSymbolPaths -join ', ')"
+    }
+
+    $symbolFiles = @(Get-ChildItem -LiteralPath $buildOutput -File -Recurse | Where-Object {
+        $_.Extension -in ".pdb", ".map"
+    })
+
+    if (Test-Path -LiteralPath $symbolsDir) {
+        Get-ChildItem -LiteralPath $symbolsDir -Force |
+            Remove-Item -Recurse -Force
+    } else {
+        New-Item -ItemType Directory -Path $symbolsDir | Out-Null
+    }
+
+    foreach ($symbolFile in $symbolFiles) {
+        $relativePath = $symbolFile.FullName.Substring($buildOutput.Length).TrimStart('\', '/')
+        $destination = Join-Path $symbolsDir $relativePath
+        $destinationParent = Split-Path $destination -Parent
+        New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        Copy-Item -LiteralPath $symbolFile.FullName -Destination $destination
+    }
+}
+
 New-Item -ItemType Directory -Path $releaseContainer -Force | Out-Null
 if (Test-Path -LiteralPath $stagingDir) {
     # Keep the staging root itself. Explorer, antivirus and recently exited
@@ -242,27 +308,15 @@ if (Test-Path -LiteralPath $stagingDir) {
 }
 
 Get-ChildItem -LiteralPath $buildOutput | Where-Object {
-    $_.Extension -notin ".pdb", ".lib", ".exp" -and
+    $_.Extension -notin ".pdb", ".map", ".lib", ".exp" -and
     $_.Name -ne "Magpie.next.exe"
 } | Copy-Item -Destination $stagingDir -Recurse
 
 # Never package per-user runtime state left in bin/ by local test launches.
-foreach ($runtimeStateName in @("cache", "logs")) {
+foreach ($runtimeStateName in @("cache", "logs", "config", "PortableAppData", "config.json")) {
     $runtimeStatePath = Join-Path $stagingDir $runtimeStateName
     if (Test-Path -LiteralPath $runtimeStatePath) {
         Remove-Item -LiteralPath $runtimeStatePath -Recurse -Force
-    }
-}
-
-if ($ExcludeTensorRTDepthRuntime) {
-    foreach ($optionalPath in @(
-        "FrameGuidance\TensorRT",
-        "NVIDIA-TensorRT-Runtime-Licenses"
-    )) {
-        $fullOptionalPath = Join-Path $stagingDir $optionalPath
-        if (Test-Path -LiteralPath $fullOptionalPath) {
-            Remove-Item -LiteralPath $fullOptionalPath -Recurse -Force
-        }
     }
 }
 
@@ -277,16 +331,52 @@ Set-Content -LiteralPath $packagedReadmePath -Value $packagedReadme -Encoding UT
 Copy-Item -LiteralPath (Join-Path $sourceRoot "docs\THIRD_PARTY_AND_REDISTRIBUTION.md") `
     -Destination (Join-Path $stagingDir "THIRD-PARTY-NOTICES.md")
 
+$versionNotes = Join-Path $sourceRoot "docs\RELEASE_NOTES_v$Version.md"
+if (!(Test-Path -LiteralPath $versionNotes)) {
+    $versionNotes = Join-Path $sourceRoot "docs\RELEASE_NOTES_v$Version-experimental.md"
+}
+if (Test-Path -LiteralPath $versionNotes) {
+    Copy-Item -LiteralPath $versionNotes -Destination (Join-Path $stagingDir "RELEASE-NOTES.md")
+}
+$frameSyncGuide = Join-Path $sourceRoot "docs\FRAME_SYNC_GUIDE.md"
+if (Test-Path -LiteralPath $frameSyncGuide) {
+    Copy-Item -LiteralPath $frameSyncGuide -Destination (Join-Path $stagingDir "FRAME_SYNC_GUIDE.md")
+}
+
 $featureOptions = [ordered]@{}
+$buildOptionsPath = Join-Path $sourceRoot "src\BuildOptions.props"
+[xml]$buildOptions = Get-Content -LiteralPath $buildOptionsPath
+$supportedFeatureOptions = @{}
+$buildOptions.Project.PropertyGroup.ChildNodes | Where-Object {
+    $_.Name -like "Enable*"
+} | ForEach-Object {
+    $supportedFeatureOptions[$_.Name] = $true
+}
 $userOptionsPath = Join-Path $sourceRoot "src\BuildOptions.props.user"
 if (Test-Path -LiteralPath $userOptionsPath) {
     [xml]$userOptions = Get-Content -LiteralPath $userOptionsPath
     $properties = $userOptions.Project.PropertyGroup.ChildNodes | Where-Object {
-        $_.Name -like "Enable*"
+        $_.Name -like "Enable*" -and $supportedFeatureOptions.ContainsKey($_.Name)
     }
     foreach ($property in $properties) {
         $featureOptions[$property.Name] = [string]$property.InnerText
     }
+}
+# Match BuildOptions.props' compatibility default so the manifest records the
+# effective AMDOF feature state even when an older user override only enables
+# FSR3.
+if (!$featureOptions.Contains("EnableAmdOpticalFlow") -and
+    $featureOptions.Contains("EnableFSR3ZeroMV")) {
+    $featureOptions["EnableAmdOpticalFlow"] =
+        $featureOptions["EnableFSR3ZeroMV"]
+}
+
+$featureOptions["EnableFrameTrace"] = if ($EnableFrameTrace) { "true" } else { "false" }
+if ($featureOptions["EnableFrameTrace"] -eq "true") {
+    $diagnosticsDir = Join-Path $stagingDir "Diagnostics"
+    New-Item -ItemType Directory -Path $diagnosticsDir -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $sourceRoot "scripts\Analyze-FrameTrace.py") -Destination $diagnosticsDir
+    Copy-Item -LiteralPath (Join-Path $sourceRoot "docs\FRAME_TRACE_GUIDE.md") -Destination (Join-Path $diagnosticsDir "README.md")
 }
 
 $fileRecords = Get-ChildItem -LiteralPath $stagingDir -File -Recurse | Sort-Object FullName | ForEach-Object {
@@ -382,6 +472,9 @@ $hash = Get-FileHash -LiteralPath $zipPath -Algorithm SHA256
 Write-Host "Version:           $Version"
 Write-Host "Commit:            $commit"
 Write-Host "Release directory: $stagingDir"
+if ($IncludeSymbols) {
+    Write-Host "Release symbols:   $symbolsDir"
+}
 Write-Host "Release ZIP:       $zipPath"
 Write-Host "ZIP bytes:         $($zip.Length)"
 Write-Host "SHA256:            $($hash.Hash)"

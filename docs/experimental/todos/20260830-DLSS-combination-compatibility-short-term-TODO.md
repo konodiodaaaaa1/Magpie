@@ -1,5 +1,7 @@
 # DLSS 组合兼容性短期 TODO（v0.5.7）
 
+> 已由 [v0.6.5 r1 TODO](20260904-v0.6.5-r1-TODO.md) 取代。以下内容保留为历史实施记录，未完成项不代表当前路线。
+
 > 创建时间：2026-08-30（Asia/Shanghai）
 > 分支：`experimental`
 > 目标版本：`0.5.7-experimental`

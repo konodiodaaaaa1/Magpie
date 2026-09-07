@@ -60,10 +60,21 @@ struct EffectConstant {
 	T step;
 };
 
+struct EffectParameterChoice {
+	int value = 0;
+	std::string label;
+
+	bool operator==(const EffectParameterChoice&) const noexcept = default;
+};
+
 struct EffectParameterDesc {
 	std::string name;
 	std::string label;
+	std::string group;
 	std::variant<EffectConstant<float>, EffectConstant<int>> constant;
+	// A non-empty list turns an integer parameter into a choice. Declaration
+	// order is preserved and is also the UI order.
+	std::vector<EffectParameterChoice> choices;
 };
 
 struct EffectPassFlags {

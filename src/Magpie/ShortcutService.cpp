@@ -3,6 +3,7 @@
 #include "AppSettings.h"
 #include "CommonSharedConstants.h"
 #include "Logger.h"
+#include "ScalingService.h"
 #include "ShortcutHelper.h"
 #include "ShortcutService.h"
 
@@ -138,9 +139,20 @@ void ShortcutService::_FireShortcut(ShortcutAction action) {
 
 LRESULT CALLBACK ShortcutService::_LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 	ShortcutService& that = Get();
+	if (nCode < 0) return CallNextHookEx(NULL, nCode, wParam, lParam);
 	const KBDLLHOOKSTRUCT* info = ((KBDLLHOOKSTRUCT*)lParam);
 
-	if (nCode < 0 || ((wParam != WM_KEYDOWN) && (wParam != WM_SYSKEYDOWN)) || !that._isKeyboardHookActive) {
+	if ((wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) && info->vkCode == VK_TAB &&
+		((info->flags & LLKHF_ALTDOWN) || (GetAsyncKeyState(VK_MENU) & 0x8000) ||
+			(GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000))) {
+		// This hook runs on the main thread. Only queue teardown here; never
+		// destroy rendering resources inside the hook or consume Windows' keys.
+		ScalingService::Get().OnTaskSwitch();
+		that._keyboardHookShortcutActivated = false;
+		return CallNextHookEx(NULL, nCode, wParam, lParam);
+	}
+
+	if (((wParam != WM_KEYDOWN) && (wParam != WM_SYSKEYDOWN)) || !that._isKeyboardHookActive) {
 		// 遇到为了防止激活开始菜单而发送的假键时不重置 _keyboardHookShortcutActivated
 		that._keyboardHookShortcutActivated = info->vkCode == 0xFF && wParam == WM_KEYUP && info->dwExtraInfo == 1;
 		return CallNextHookEx(NULL, nCode, wParam, lParam);

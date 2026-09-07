@@ -74,16 +74,10 @@ struct ScalingModeEffectItem : ScalingModeEffectItemT<ScalingModeEffectItem>,
 
 	void Remove();
 
-	bool CanMove() const noexcept;
-	bool CanMoveUp() const noexcept;
-	bool CanMoveDown() const noexcept;
-	void MoveUp() noexcept;
-	void MoveDown() noexcept;
+	bool CanDrag() const noexcept;
 
-	void RefreshMoveState();
+	void RefreshDragState();
 
-	// 上移为 true，下移为 false
-	::Magpie::Event<ScalingModeEffectItem&, bool> Moved;
 	::Magpie::Event<uint32_t> Removed;
 
 private:

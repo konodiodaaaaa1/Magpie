@@ -1,17 +1,31 @@
-// Experimental XeSS Multi-Frame Generation marker effect. The requested
-// multiplier is clamped to the maximum reported by the active GPU/driver.
+// Experimental XeSS Multi-Frame Generation marker effect. MFG requests are
+// accepted according to the requested multiplier and the XeSS-FG SDK support.
 
 //!MAGPIE EFFECT
 //!VERSION 4
-//!SORT_NAME XeSS Multi-Frame Generation x2-x4 Zero-MV (No Smooth Motion)
+//!SORT_NAME XeSS Multi-Frame Generation x2-x4
 
 //!PARAMETER
 //!LABEL Frame Multiplier
-//!DEFAULT 2
+//!DEFAULT 3
 //!MIN 2
 //!MAX 4
 //!STEP 1
-float multiplier;
+int multiplier;
+
+//!PARAMETER
+//!LABEL Optical Flow Method
+//!DEFAULT 0
+//!OPTION 0 None
+//!OPTION 1 AMDOF
+int opticalFlowMethod;
+
+//!PARAMETER
+//!LABEL OF Quality
+//!DEFAULT 1
+//!OPTION 0 Performance
+//!OPTION 1 Quality
+int amdOpticalFlowMode;
 
 //!TEXTURE
 Texture2D INPUT;

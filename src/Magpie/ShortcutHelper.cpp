@@ -15,6 +15,16 @@ std::string ShortcutHelper::ToString(ShortcutAction action) noexcept {
 		return "WindowedModeScale";
 	case ShortcutAction::Toolbar:
 		return "Toolbar";
+	case ShortcutAction::Profiler:
+		return "Profiler";
+	case ShortcutAction::EffectParameters:
+		return "EffectParameters";
+	case ShortcutAction::Screenshot:
+		return "Screenshot";
+	case ShortcutAction::ToolbarPin:
+		return "ToolbarPin";
+	case ShortcutAction::Comparison:
+		return "Comparison";
 	case ShortcutAction::COUNT_OR_NONE:
 		return "None";
 	default:
@@ -134,6 +144,16 @@ hstring to_hstring(ShortcutAction action) {
 		return L"WindowedModeScale";
 	case ShortcutAction::Toolbar:
 		return L"Toolbar";
+	case ShortcutAction::Profiler:
+		return L"Profiler";
+	case ShortcutAction::EffectParameters:
+		return L"EffectParameters";
+	case ShortcutAction::Screenshot:
+		return L"Screenshot";
+	case ShortcutAction::ToolbarPin:
+		return L"ToolbarPin";
+	case ShortcutAction::Comparison:
+		return L"Comparison";
 	case ShortcutAction::COUNT_OR_NONE:
 		return L"None";
 	default:

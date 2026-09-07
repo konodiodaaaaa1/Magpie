@@ -8,8 +8,8 @@ class NgxD3D12Core;
 
 struct DLSSFrameGenerationSettings {
 	uint32_t multiplier = 2;
-	bool useMotionVectors = true;
-	bool useEstimatedDepth = false;
+	NvidiaOpticalFlowQuality motionVectorQuality =
+		NvidiaOpticalFlowQuality::Balanced;
 };
 
 // Experimental DLSS Frame Generation adapter. It consumes final effect-chain

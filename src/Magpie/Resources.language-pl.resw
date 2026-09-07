@@ -154,6 +154,9 @@
   <data name="Profile_General_3DGameMode.Header" xml:space="preserve">
     <value>Tryb gry 3D</value>
   </data>
+  <data name="Profile_General_HdrCompatibility.Header" xml:space="preserve">
+    <value>HDR compatibility</value>
+  </data>
   <data name="Profile_General_AutoScale.Header" xml:space="preserve">
     <value>Automatycznie skaluj, gdy okno jest na pierwszym planie</value>
   </data>
@@ -853,6 +856,9 @@
   </data>
   <data name="Profile_General_3DGameMode.Description" xml:space="preserve">
     <value>Włącza optymalizacje dla gier 3D, ale nie zadziała z paskiem narzędzi i skalowaniem okien</value>
+  </data>
+  <data name="Profile_General_HdrCompatibility.Description" xml:space="preserve">
+    <value>Enable the experimental HDR capture-to-effect compatibility path. Keep disabled unless you are testing HDR support</value>
   </data>
   <data name="Home_Toolbar_ScreenshotSaveDirectory.Header" xml:space="preserve">
     <value>Katalog zapisu zrzutów ekranu</value>

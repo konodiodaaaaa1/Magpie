@@ -183,8 +183,7 @@ static bool WaitForFence(DLSSFrameGenerator::Impl& impl, uint64_t value) noexcep
 	if (FAILED(impl.fence12->SetEventOnCompletion(value, event.get()))) {
 		return false;
 	}
-	event.wait();
-	return true;
+	return WaitForSingleObject(event.get(), 3000) == WAIT_OBJECT_0;
 }
 
 static bool WaitForQueue(DLSSFrameGenerator::Impl& impl) noexcept {
@@ -354,7 +353,7 @@ static bool CreateInterpolationDisableResources(
 	return true;
 }
 
-static void CollectInterpolationDisableDiagnostic(
+static std::optional<bool> ReadInterpolationDisabled(
 	DLSSFrameGenerator::Impl& impl,
 	uint32_t frameIndex
 ) noexcept {
@@ -364,7 +363,7 @@ static void CollectInterpolationDisableDiagnostic(
 		0, &readRange, &mapped);
 	if (FAILED(hr) || !mapped) {
 		++impl.diagnosticInterpolationReadbackFailure[frameIndex];
-		return;
+		return std::nullopt;
 	}
 	const bool disabled = *static_cast<const uint8_t*>(mapped) != 0;
 	D3D12_RANGE writtenRange{};
@@ -374,6 +373,7 @@ static void CollectInterpolationDisableDiagnostic(
 	} else {
 		++impl.diagnosticInterpolationEnabled[frameIndex];
 	}
+	return disabled;
 }
 
 static void SetIdentity(float matrix[4][4]) noexcept {
@@ -407,8 +407,8 @@ bool DLSSFrameGenerator::Initialize(
 	input->GetDesc(&inputDesc);
 	impl->width = inputDesc.Width;
 	impl->height = inputDesc.Height;
-	const bool guidanceRequested = impl->settings.useMotionVectors ||
-		impl->settings.useEstimatedDepth;
+	const bool guidanceRequested = impl->settings.motionVectorQuality !=
+		NvidiaOpticalFlowQuality::None;
 	const bool compatibleGuidanceExtent = guidanceRequested &&
 		guidanceExtent.IsValid() &&
 		guidanceExtent.width <= impl->width &&
@@ -600,16 +600,11 @@ bool DLSSFrameGenerator::Initialize(
 
 	Logger::Get().Info(fmt::format(
 		"DLSS FG_Experimental initialized: backbuffer={}x{}, render={}x{}, "
-		"multiplier={}x, requestedMotion={}, requestedDepth={}, "
+		"multiplier={}x, requestedMotion={}, depth=zero-contract, "
 		"motionContract=current-to-previous/source-pixels scale=1,1",
 		impl->width, impl->height, impl->renderWidth, impl->renderHeight,
-		impl->multiplier, impl->settings.useMotionVectors,
-		impl->settings.useEstimatedDepth));
-	if (impl->settings.useEstimatedDepth) {
-		Logger::Get().Warn(
-			"DLSSFG Estimated Depth is experimental: DAV2 relative inverse depth "
-			"is not hardware projection depth; Motion-only is recommended");
-	}
+		impl->multiplier,
+		static_cast<uint32_t>(impl->settings.motionVectorQuality)));
 	_impl = std::move(impl);
 	return true;
 }
@@ -626,9 +621,8 @@ bool DLSSFrameGenerator::Resize(
 FrameGuidanceRequirements
 DLSSFrameGenerator::GetFrameGuidanceRequirements() const noexcept {
 	FrameGuidanceRequirements result{ .zero = true };
-	result.motion = _requestedSettings.useMotionVectors ||
-		_requestedSettings.useEstimatedDepth;
-	result.depth = _requestedSettings.useEstimatedDepth;
+	result.Add(MotionVectorRequest::Nvidia(
+		_requestedSettings.motionVectorQuality));
 	return result;
 }
 
@@ -656,41 +650,35 @@ bool DLSSFrameGenerator::Draw(
 	};
 	const FrameGuidanceView selected = SelectFrameGuidanceChannels(
 		guidance, zeroGuidance, frameId, renderExtent,
-		impl.settings.useMotionVectors,
-		impl.settings.useEstimatedDepth);
+		impl.settings.motionVectorQuality != NvidiaOpticalFlowQuality::None);
 	bool sharedGuidanceBound = false;
 	bool realMotion = false;
-	bool realDepth = false;
-	if ((impl.settings.useMotionVectors || impl.settings.useEstimatedDepth) &&
+	if (impl.settings.motionVectorQuality != NvidiaOpticalFlowQuality::None &&
 		selected.IsValidFor(frameId, renderExtent) &&
 		impl.guidanceInterop->Update(selected, frameId, renderExtent) &&
 		impl.guidanceInterop->WaitForProducer(impl.context11, selected)) {
 		sharedGuidanceBound = true;
-		realMotion = impl.settings.useMotionVectors &&
+		realMotion = impl.settings.motionVectorQuality !=
+			NvidiaOpticalFlowQuality::None &&
 			!selected.motion.metadata.isZero;
-		realDepth = impl.settings.useEstimatedDepth &&
-			!selected.depth.metadata.isZero;
 	}
 
 	const uint8_t guidanceBinding = uint8_t(realMotion) |
-		(uint8_t(realDepth) << 1) |
-		(uint8_t(impl.settings.useMotionVectors) << 2) |
-		(uint8_t(impl.settings.useEstimatedDepth) << 3) |
-		(uint8_t(sharedGuidanceBound) << 4);
+		(uint8_t(impl.settings.motionVectorQuality !=
+			NvidiaOpticalFlowQuality::None) << 1) |
+		(uint8_t(sharedGuidanceBound) << 2);
 	const bool bindingChanged = impl.lastGuidanceBinding != UINT8_MAX &&
 		impl.lastGuidanceBinding != guidanceBinding;
 	if (impl.lastGuidanceBinding != guidanceBinding) {
 		Logger::Get().Info(fmt::format(
-			"DLSS FG guidance frameId={}: requested motion={} depth={}, "
-			"produced motion={} depth={}, bound motion={} depth={}, fallback={}",
-			frameId, impl.settings.useMotionVectors,
-			impl.settings.useEstimatedDepth,
+			"DLSS FG guidance frameId={}: requested motion={}, "
+			"produced motion={}, bound motion={} depth=zero, fallback={}",
+			frameId, impl.settings.motionVectorQuality !=
+				NvidiaOpticalFlowQuality::None,
 			guidance.motion.metadata.valid && !guidance.motion.metadata.isZero,
-			guidance.depth.metadata.valid && !guidance.depth.metadata.isZero,
-			realMotion ? "real" : "zero", realDepth ? "real" : "zero",
+			realMotion ? "real" : "zero",
 			!sharedGuidanceBound ? "interop-or-extent-zero" :
-			((impl.settings.useMotionVectors && !realMotion) ||
-			 (impl.settings.useEstimatedDepth && !realDepth) ?
+			(impl.settings.motionVectorQuality != NvidiaOpticalFlowQuality::None && !realMotion ?
 				"provider-zero" : "none")));
 	}
 	const bool guidanceReset = bindingChanged ||
@@ -709,7 +697,8 @@ bool DLSSFrameGenerator::Draw(
 		return false;
 	}
 
-	const uint32_t generatedFrameCount = impl.resetHistory ? 1 : impl.multiplier - 1;
+	const bool resetThisFrame = impl.resetHistory || guidanceReset;
+	const uint32_t generatedFrameCount = resetThisFrame ? 1 : impl.multiplier - 1;
 	DWORD frameIdSehCode = 0;
 	if (!SetParameterULLSafely(
 		impl.parameters, NVSDK_NGX_DLSSG_Parameter_BackbufferFrameID,
@@ -718,8 +707,6 @@ bool DLSSFrameGenerator::Draw(
 			"Set DLSSFG BackbufferFrameID raised SEH {:#x}", frameIdSehCode));
 		return false;
 	}
-	const bool sampleInterpolationDisable =
-		!impl.resetHistory && impl.diagnosticRealFrames + 1 >= 120;
 	for (uint32_t frameIndex = 1; frameIndex <= generatedFrameCount; ++frameIndex) {
 		hr = impl.allocator12->Reset();
 		if (SUCCEEDED(hr)) {
@@ -779,9 +766,9 @@ bool DLSSFrameGenerator::Draw(
 		optionalParams.cameraFOV = 1.04719755f;
 		optionalParams.cameraAspectRatio =
 			float(impl.renderWidth) / float(impl.renderHeight);
-		optionalParams.depthInverted = impl.settings.useEstimatedDepth;
+		optionalParams.depthInverted = false;
 		optionalParams.cameraMotionIncluded = realMotion;
-		optionalParams.reset = impl.resetHistory || guidanceReset;
+		optionalParams.reset = resetThisFrame;
 		optionalParams.motionVectorsInvalidValue = 0.0f;
 		optionalParams.motionVectorsDilated = realMotion;
 		optionalParams.menuDetectionEnabled = false;
@@ -823,7 +810,7 @@ bool DLSSFrameGenerator::Draw(
 			return false;
 		}
 		++impl.diagnosticEvaluateSuccess[frameIndex];
-		if (sampleInterpolationDisable) {
+		{
 			D3D12_RESOURCE_BARRIER diagnosticBarrier{};
 			diagnosticBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 			diagnosticBarrier.Transition = {
@@ -869,18 +856,17 @@ bool DLSSFrameGenerator::Draw(
 		if (FAILED(hr)) {
 			return false;
 		}
-		if (!impl.resetHistory) {
+		// The flag is part of the SDK output, not optional telemetry. Also wait
+		// on reset/disabled frames before reusing the allocator and output buffer.
+		if (!WaitForFence(impl, outputReady)) return false;
+		const auto disabled = ReadInterpolationDisabled(impl, frameIndex);
+		if (!disabled) return false;
+		if (!resetThisFrame && !*disabled) {
 			if (!publishGeneratedFrame(impl.sharedGenerated11.get())) {
 				++impl.diagnosticGeneratedPublishFailure;
 				return false;
 			}
 			++impl.diagnosticGeneratedPublishSuccess;
-		}
-	}
-	if (sampleInterpolationDisable) {
-		for (uint32_t frameIndex = 1;
-			frameIndex <= generatedFrameCount; ++frameIndex) {
-			CollectInterpolationDisableDiagnostic(impl, frameIndex);
 		}
 	}
 

@@ -1,5 +1,8 @@
 namespace Magpie {
 	runtimeclass HomeViewModel : Windows.UI.Xaml.Data.INotifyPropertyChanged {
+		Boolean ShowRecentIssue;
+		String RecentIssueSummary { get; };
+		void ShowRecentIssueDetails();
 		Boolean ShowUpdateCard;
 		String UpdateCardTitle { get; };
 		Boolean IsAutoCheckForUpdates;
@@ -33,6 +36,9 @@ namespace Magpie {
 		Boolean IsAllowScalingMaximized;
 		Boolean IsSimulateExclusiveFullscreen;
 		Boolean IsInlineParams;
+		Boolean IsFrontEdgeSyncEnabled;
+		Boolean IsVRREnabled;
+		Double FrontEdgeSyncFrameRate;
 		static IVector<IInspectable> MinFrameRateOptions { get; };
 		Int32 MinFrameRateIndex;
 

@@ -14,6 +14,7 @@ public:
 		FrameGuidanceExtent sourceExtent
 	) noexcept;
 	bool Resize(FrameGuidanceExtent sourceExtent) noexcept;
+	void Reset() noexcept;
 
 	ID3D11Texture2D* Depth() const noexcept { return _depth.get(); }
 	ID3D11Texture2D* Motion() const noexcept { return _motion.get(); }
@@ -31,15 +32,15 @@ private:
 	winrt::com_ptr<ID3D11Texture2D> _confidence;
 };
 
-class ZeroDepthProvider final : public IDepthProvider {
+class ZeroDepthProvider final {
 public:
 	explicit ZeroDepthProvider(ZeroFrameGuidanceResources& resources) noexcept :
 		_resources(&resources) {}
 
-	bool Initialize(DeviceResources& resources, FrameGuidanceExtent sourceExtent) noexcept override;
-	bool BeginFrame(const FrameGuidanceFrame& frame, DepthProviderOutput& output) noexcept override;
-	void Reset(FrameGuidanceResetReason reason) noexcept override;
-	bool Resize(FrameGuidanceExtent sourceExtent) noexcept override;
+	bool Initialize(DeviceResources& resources, FrameGuidanceExtent sourceExtent) noexcept;
+	bool BeginFrame(const FrameGuidanceFrame& frame, DepthProviderOutput& output) noexcept;
+	void Reset(FrameGuidanceResetReason reason) noexcept;
+	bool Resize(FrameGuidanceExtent sourceExtent) noexcept;
 
 private:
 	ZeroFrameGuidanceResources* _resources = nullptr;

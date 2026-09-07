@@ -102,6 +102,12 @@ float2 Pass1(float2 pos) {
 	return float2(abs(center - upper), abs(center - right)) > threshold;
 }
 
+//!PASS 2
+//!DESC Morphological line search
+//!STYLE PS
+//!IN INPUT, edgeMask
+//!OUT edgeCounts
+
 float LoadEdge(int2 p, uint channel) {
 	return edgeMask.Load(int3(ClampPos(p), 0))[channel];
 }
@@ -118,38 +124,20 @@ float2 SearchEdge(int2 p, int2 negativeDir, int2 positiveDir, uint channel) {
 	bool positiveActive = true;
 	bool negativeEnd = false;
 	bool positiveEnd = false;
-
 	[unroll]
 	for (uint i = 1; i <= MAX_EDGE_LENGTH; ++i) {
 		if (negativeActive) {
-			if (LoadEdge(p + negativeDir * int(i), channel) > 0.5) {
-				++negativeCount;
-			} else {
-				negativeActive = false;
-				negativeEnd = true;
-			}
+			if (LoadEdge(p + negativeDir * int(i), channel) > 0.5) ++negativeCount;
+			else { negativeActive = false; negativeEnd = true; }
 		}
-
 		if (positiveActive) {
-			if (LoadEdge(p + positiveDir * int(i), channel) > 0.5) {
-				++positiveCount;
-			} else {
-				positiveActive = false;
-				positiveEnd = true;
-			}
+			if (LoadEdge(p + positiveDir * int(i), channel) > 0.5) ++positiveCount;
+			else { positiveActive = false; positiveEnd = true; }
 		}
 	}
-
-	return float2(
-		EncodeCount(negativeCount, negativeEnd),
+	return float2(EncodeCount(negativeCount, negativeEnd),
 		EncodeCount(positiveCount, positiveEnd));
 }
-
-//!PASS 2
-//!DESC Morphological line search
-//!STYLE PS
-//!IN edgeMask
-//!OUT edgeCounts
 
 float4 Pass2(float2 pos) {
 	const int2 p = PixelPos(pos);
@@ -239,6 +227,54 @@ void BlendEdge(
 //!IN INPUT, edgeCounts
 //!OUT OUTPUT
 
+// Pass 3 is compiled as an independent shader. Keep its helpers in this
+// pass section so the effect compiler includes them in the generated source.
+uint DecodeRawPass3(float value) {
+	return (uint)round(saturate(value) * 15.0);
+}
+
+bool ColorsDifferPass3(int2 a, int2 b) {
+	return abs(LoadLuma(a) - LoadLuma(b)) > threshold;
+}
+
+void BlendEdgePass3(float2 encodedCounts, int2 edgePos, int2 acrossEdge,
+	int2 alongEdge, bool inverse, inout float4 color) {
+	const uint rawNegative = DecodeRawPass3(encodedCounts.x);
+	const uint rawPositive = DecodeRawPass3(encodedCounts.y);
+	const bool negativeEnd = rawNegative >= 8;
+	const bool positiveEnd = rawPositive >= 8;
+	if (!negativeEnd && !positiveEnd) return;
+	uint negativeCount = rawNegative & 7;
+	uint positiveCount = rawPositive & 7;
+	const float4 adjacent = LoadColor(edgePos + acrossEdge);
+	if (negativeCount + positiveCount == 0) {
+		const float weight = 0.125 * strength;
+		color.rgb = sqrt(lerp(color.rgb * color.rgb, adjacent.rgb * adjacent.rgb, weight));
+		return;
+	}
+	if (!positiveEnd) positiveCount = MAX_EDGE_LENGTH + 1;
+	if (!negativeEnd) negativeCount = MAX_EDGE_LENGTH + 1;
+	const float length = negativeCount + positiveCount + 1.0;
+	const float midpoint = length * 0.5;
+	const float distance = negativeCount;
+	uint shape = 0;
+	if (ColorsDifferPass3(edgePos - alongEdge * int(negativeCount),
+		edgePos - alongEdge * int(negativeCount + 1))) shape |= 1;
+	if (ColorsDifferPass3(edgePos + alongEdge * int(positiveCount),
+		edgePos + alongEdge * int(positiveCount + 1))) shape |= 2;
+	const bool shouldBlend =
+		(inverse && ((shape == 2 && float(negativeCount) <= midpoint) ||
+			(shape == 1 && float(negativeCount) >= midpoint) || shape == 0)) ||
+		(!inverse && ((shape == 2 && float(negativeCount) >= midpoint) ||
+			(shape == 1 && float(negativeCount) <= midpoint) || shape == 3));
+	if (shouldBlend) {
+		const float h0 = abs((length - distance) / length - 0.5);
+		const float h1 = abs((length - distance - 1.0) / length - 0.5);
+		const float area = 0.5 * (h0 + h1) * strength;
+		color.rgb = sqrt(lerp(color.rgb * color.rgb, adjacent.rgb * adjacent.rgb, area));
+	}
+}
+
 float4 Pass3(float2 pos) {
 	const int2 p = PixelPos(pos);
 	float4 color = LoadColor(p);
@@ -250,16 +286,16 @@ float4 Pass3(float2 pos) {
 	const float2 leftVertical = edgeCounts.Load(int3(left, 0)).zw;
 
 	if (any(current.xy > 0)) {
-		BlendEdge(current.xy, p, int2(0, -1), int2(1, 0), false, color);
+			BlendEdgePass3(current.xy, p, int2(0, -1), int2(1, 0), false, color);
 	}
 	if (any(belowHorizontal > 0)) {
-		BlendEdge(belowHorizontal, below, int2(0, 1), int2(1, 0), true, color);
+			BlendEdgePass3(belowHorizontal, below, int2(0, 1), int2(1, 0), true, color);
 	}
 	if (any(current.zw > 0)) {
-		BlendEdge(current.zw, p, int2(1, 0), int2(0, -1), false, color);
+			BlendEdgePass3(current.zw, p, int2(1, 0), int2(0, -1), false, color);
 	}
 	if (any(leftVertical > 0)) {
-		BlendEdge(leftVertical, left, int2(-1, 0), int2(0, -1), true, color);
+			BlendEdgePass3(leftVertical, left, int2(-1, 0), int2(0, -1), true, color);
 	}
 
 	return color;

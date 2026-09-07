@@ -6,6 +6,10 @@ namespace winrt::Magpie::implementation {
 
 struct HomeViewModel : HomeViewModelT<HomeViewModel>, wil::notify_property_changed_base<HomeViewModel> {
 	HomeViewModel();
+	bool ShowRecentIssue() const noexcept;
+	void ShowRecentIssue(bool value);
+	hstring RecentIssueSummary() const noexcept;
+	fire_and_forget ShowRecentIssueDetails() noexcept;
 
 	hstring TimerDescription() const noexcept;
 
@@ -75,6 +79,13 @@ struct HomeViewModel : HomeViewModelT<HomeViewModel>, wil::notify_property_chang
 	bool IsInlineParams() const noexcept;
 	void IsInlineParams(bool value);
 
+	bool IsFrontEdgeSyncEnabled() const noexcept;
+	void IsFrontEdgeSyncEnabled(bool value);
+	bool IsVRREnabled() const noexcept;
+	void IsVRREnabled(bool value);
+	double FrontEdgeSyncFrameRate() const noexcept;
+	void FrontEdgeSyncFrameRate(double value);
+
 	static IVector<IInspectable> MinFrameRateOptions();
 
 	int MinFrameRateIndex() const noexcept;
@@ -129,6 +140,8 @@ private:
 	void _ToggleTimer(bool windowedMode) const noexcept;
 
 	::Magpie::Event<bool, bool>::EventRevoker _isTimerOnRevoker;
+	::Magpie::Event<>::EventRevoker _issueChangedRevoker;
+	::Magpie::Event<>::EventRevoker _frameSyncChangedRevoker;
 	::Magpie::Event<double>::EventRevoker _timerTickRevoker;
 	::Magpie::Event<bool>::EventRevoker _isScalingChangedRevoker;
 	::Magpie::Event<bool>::EventRevoker _isShowOnHomePageChangedRevoker;

@@ -6,7 +6,14 @@
 //!SORT_NAME Frame Rate Filter
 
 //!PARAMETER
-//!LABEL Target Frame Rate
+//!LABEL Frame Rate Mode
+//!DEFAULT 0
+//!OPTION 0 Based on Front Edge Sync
+//!OPTION 1 Custom
+int frameRateMode;
+
+//!PARAMETER
+//!LABEL Custom Frame Rate
 //!DEFAULT 60
 //!MIN 1
 //!MAX 240

@@ -239,7 +239,7 @@ shared float inp1[481];
 #define imageStore(out_image, pos, val) imageStoreOverride(pos, val.x)
 void imageStoreOverride(uint2 pos, float value) {
 	float2 UV = mul(rgb2uv, INPUT.SampleLevel(sam_INPUT_LINEAR, HOOKED_map(pos), 0).rgb);
-	OUTPUT[pos] = float4(mul(yuv2rgb, float3(value.x, UV)), 1.0);
+	OUTPUT[pos] = float4(MP_HDR_SATURATE(mul(yuv2rgb, float3(value.x, UV))), 1.0);
 }
 
 #define INPUT_tex(pos) GET_SAMPLE(vec4(texture(INPUT, pos)))

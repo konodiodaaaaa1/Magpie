@@ -1,7 +1,14 @@
 #pragma once
 #include <parallel_hashmap/phmap.h>
+#include <string_view>
+#include <memory>
+#include "EffectParameterPersistence.h"
+#include "FramePacingOptions.h"
+#include <mutex>
 
 namespace Magpie {
+
+enum class OverlayAction { Profiler, EffectParameters, Screenshot, ToolbarPin, Comparison };
 
 enum class CaptureMethod {
 	GraphicsCapture,
@@ -15,6 +22,7 @@ enum class MultiMonitorUsage {
 	Closest,
 	Intersected,
 	All,
+	Specific,
 	COUNT
 };
 
@@ -74,6 +82,171 @@ struct EffectOption {
 	}
 };
 
+enum class FrameGenerationEffectKind : uint8_t {
+	None,
+	DLSS,
+	XeSSX2,
+	XeSSMultiFrame
+};
+
+inline FrameGenerationEffectKind ClassifyFrameGenerationEffect(
+	std::string_view name
+) noexcept {
+	if (name == "DLSSFG\\DLSS_FrameGeneration") {
+		return FrameGenerationEffectKind::DLSS;
+	}
+	if (name == "XeSSFG\\XeSS_FrameGeneration_x2_ZeroMV") {
+		return FrameGenerationEffectKind::XeSSX2;
+	}
+	if (name == "XeSSFG\\XeSS_MultiFrameGeneration_ZeroMV") {
+		return FrameGenerationEffectKind::XeSSMultiFrame;
+	}
+	return FrameGenerationEffectKind::None;
+}
+
+inline FrameGenerationEffectKind ClassifyFrameGenerationEffect(
+	std::wstring_view name
+) noexcept {
+	if (name == L"DLSSFG\\DLSS_FrameGeneration") {
+		return FrameGenerationEffectKind::DLSS;
+	}
+	if (name == L"XeSSFG\\XeSS_FrameGeneration_x2_ZeroMV") {
+		return FrameGenerationEffectKind::XeSSX2;
+	}
+	if (name == L"XeSSFG\\XeSS_MultiFrameGeneration_ZeroMV") {
+		return FrameGenerationEffectKind::XeSSMultiFrame;
+	}
+	return FrameGenerationEffectKind::None;
+}
+
+struct FrameGenerationChainValidation {
+	uint32_t count = 0;
+	FrameGenerationEffectKind first = FrameGenerationEffectKind::None;
+	FrameGenerationEffectKind second = FrameGenerationEffectKind::None;
+
+	bool HasConflict() const noexcept { return count > 1; }
+	bool HasFrameGeneration() const noexcept { return count != 0; }
+};
+
+template <typename EffectRange>
+FrameGenerationChainValidation ValidateFrameGenerationChain(
+	const EffectRange& effects
+) noexcept {
+	FrameGenerationChainValidation result;
+	for (const auto& effect : effects) {
+		const FrameGenerationEffectKind kind =
+			ClassifyFrameGenerationEffect(effect.name);
+		if (kind == FrameGenerationEffectKind::None) {
+			continue;
+		}
+		if (result.count == 0) {
+			result.first = kind;
+		} else if (result.count == 1) {
+			result.second = kind;
+		}
+		++result.count;
+	}
+	return result;
+}
+
+enum class EffectParameterApplyMode : uint8_t {
+	Unavailable,
+	Live,
+	RestartRequired
+};
+
+enum class EffectParameterRestartReason : uint8_t {
+	None,
+	InlineParameters,
+	NativeBackend,
+	ResourceRecreation,
+	FrameGuidance,
+	FrameGeneration
+};
+
+struct EffectParameterRuntimeInfo {
+	std::string name;
+	EffectParameterApplyMode applyMode = EffectParameterApplyMode::RestartRequired;
+	EffectParameterRestartReason restartReason = EffectParameterRestartReason::NativeBackend;
+	bool automaticRestart = false;
+};
+
+// One state per user-started session, retained across automatic rebuilds.
+// Backend writes only applied values; UI edits write only desired values.
+struct EffectParameterSessionState {
+	struct Snapshot {
+		std::vector<EffectOption> applied;
+		std::vector<EffectOption> desired;
+		FrameSyncSettings frameSync;
+		uint64_t revision = 0;
+	};
+
+	explicit EffectParameterSessionState(const std::vector<EffectOption>& effects,
+		FrameSyncSettings frameSync = {}) : _snapshot{ effects, effects, frameSync, 1 } {}
+	// Save receipts survive automatic rebuilds too. The revision is allocated
+	// only by the scaling/UI thread; completion itself is atomic.
+	std::shared_ptr<EffectParametersSaveState> saveState = std::make_shared<EffectParametersSaveState>();
+	uint64_t saveRevision = 0;
+
+	bool ReadIfChanged(Snapshot& result) const {
+		std::scoped_lock lock(_mutex);
+		if (result.revision == _snapshot.revision) return false;
+		result = _snapshot;
+		return true;
+	}
+	bool HasChanges(uint64_t revision) const {
+		std::scoped_lock lock(_mutex);
+		return revision != _snapshot.revision;
+	}
+	std::vector<EffectOption> Applied() const {
+		std::scoped_lock lock(_mutex);
+		return _snapshot.applied;
+	}
+	void Applied(const std::vector<EffectOption>& effects) {
+		std::scoped_lock lock(_mutex);
+		_snapshot.applied = effects;
+		++_snapshot.revision;
+	}
+	void Desired(const std::vector<EffectOption>& effects) {
+		std::scoped_lock lock(_mutex);
+		_snapshot.desired = effects;
+		++_snapshot.revision;
+	}
+	void Desired(uint32_t effect, const std::string& parameter, float value) {
+		std::scoped_lock lock(_mutex);
+		if (effect >= _snapshot.desired.size()) return;
+		_snapshot.desired[effect].parameters[parameter] = value;
+		++_snapshot.revision;
+	}
+	void DesiredFrameSync(FrameSyncSettings value) {
+		std::scoped_lock lock(_mutex);
+		if (_snapshot.frameSync == value) return;
+		_snapshot.frameSync = value;
+		++_snapshot.revision;
+	}
+private:
+	mutable std::mutex _mutex;
+	Snapshot _snapshot;
+};
+
+enum class EffectParametersRequestKind : uint8_t {
+	AutoSave,
+	SaveAndRestart
+};
+
+struct EffectParametersRequest {
+	EffectParametersRequestKind kind = EffectParametersRequestKind::AutoSave;
+	std::vector<EffectOption> effects;
+	std::vector<EffectOption> previousEffects;
+	FrameSyncSettings frameSync;
+	FrameSyncSettings previousFrameSync;
+	std::shared_ptr<EffectParametersSaveState> saveState;
+	uint64_t revision = 0;
+	HWND hwndSource = nullptr;
+	HWND hwndScaling = nullptr;
+	uint32_t scalingRunId = 0;
+};
+
 enum class DuplicateFrameDetectionMode {
 	Always,
 	Dynamic,
@@ -104,13 +277,14 @@ struct OverlayOptions {
 	phmap::flat_hash_map<std::string, OverlayWindowOption> windows;
 };
 
+// Values are exposed as MP diagnostic codes. Append new values; do not reorder.
 enum class ScalingError {
 	NoError,
 
 	/////////////////////////////////////
-	// 
+	//
 	// 先决条件错误
-	// 
+	//
 	/////////////////////////////////////
 
 	// 未配置缩放模式或者缩放模式不合法
@@ -145,7 +319,53 @@ enum class ScalingError {
 	// ID3D11Device5::CreateFence 失败
 	CreateFenceFailed,
 	// NVIDIA VSR 运行库无法从当前程序路径完成初始化
-	NvidiaVsrPathUnsupported
+	NvidiaVsrPathUnsupported,
+	OpticalFlowProviderUnavailable,
+	NvidiaOpticalFlowUnsupported,
+	NvidiaOpticalFlowQualityUnsupported,
+	AmdOpticalFlowUnsupported,
+	OpticalFlowInteropFailed,
+	ConflictingFrameGenerationEffects,
+	XeSSMfgRequiresIntel,
+	XeSSMfgUnsupported,
+	XeSSMfgMultiplierUnsupported,
+	ScalingModeNotSelected,
+	ScalingModeEmpty,
+	ScalingModeUnknownEffect,
+	GraphicsDeviceInitFailed,
+	PresentationInitFailed,
+	EffectCompileFailed,
+	EffectResourceFailed,
+	NativeEffectInitFailed,
+	FrameGenerationInitFailed,
+	OverlayInitFailed,
+	SharedTextureOpenFailed,
+	DlssNrUnavailable,
+	FrameGenerationDisabled,
+	ConfigurationWriteFailed,
+	EffectParameterConflict,
+	EffectParameterLiveFailed,
+	ScreenshotDirectoryFailed,
+	ScreenshotEncodeFailed,
+	ScreenshotReadbackFailed,
+	ScreenshotWriteFailed,
+	SourceWindowClosed,
+	SourceWindowUnresponsive,
+	SourceWindowTooSmall,
+	SourceWindowOffscreen,
+	SourceWindowUnsupported,
+	SourceWindowGeometryFailed,
+	ScalingAlreadyActive,
+	ScalingWindowCreationFailed,
+	DisplayLayoutFailed,
+	ImportReadFailed,
+	ImportEmpty,
+	ImportInvalidJson,
+	ImportWrongFileType,
+	ImportIncompatible,
+	ExportWriteFailed,
+	FileDialogFailed,
+	PassThroughUnavailable
 };
 
 struct ScalingFlags {
@@ -169,6 +389,7 @@ struct ScalingFlags {
 	static constexpr uint32_t BenchmarkMode = 1 << 20;
 	static constexpr uint32_t DeveloperMode = 1 << 21;
 	static constexpr uint32_t DisableTopmost = 1 << 22;
+	static constexpr uint32_t EnableHdrCompatibility = 1 << 23;
 };
 
 struct ScalingOptions {
@@ -191,16 +412,25 @@ struct ScalingOptions {
 	DEFINE_FLAG_ACCESSOR(IsCaptureTitleBar, ScalingFlags::CaptureTitleBar, flags)
 	DEFINE_FLAG_ACCESSOR(IsAdjustCursorSpeed, ScalingFlags::AdjustCursorSpeed, flags)
 	DEFINE_FLAG_ACCESSOR(IsDirectFlipDisabled, ScalingFlags::DisableDirectFlip, flags)
+	DEFINE_FLAG_ACCESSOR(IsHdrCompatibilityEnabled, ScalingFlags::EnableHdrCompatibility, flags)
 
 	std::vector<EffectOption> effects;
+	uint32_t scalingModeIdx = 0;
+	std::shared_ptr<EffectParameterSessionState> parameterSession;
+	std::wstring scalingModeName;
 	uint32_t flags = ScalingFlags::AdjustCursorSpeed;
 	Cropping cropping{};
 	GraphicsCardId graphicsCardId;
 	float minFrameRate = 0.0f;
 	std::optional<float> maxFrameRate;
+	bool isFrontEdgeSyncEnabled = true;
+	bool isVRREnabled = false;
+	// 0 targets the display refresh rate, divided by FG multiplier for base FPS.
+	float frontEdgeSyncFrameRate = 60.0f;
 	float cursorScaling = 1.0f;
 	CaptureMethod captureMethod = CaptureMethod::GraphicsCapture;
 	MultiMonitorUsage multiMonitorUsage = MultiMonitorUsage::Closest;
+	std::wstring preferredMonitorId;
 	DestAlignment destAlignment = DestAlignment::Center;
 	CursorInterpolationMode cursorInterpolationMode = CursorInterpolationMode::NearestNeighbor;
 	std::optional<float> autoHideCursorDelay;
@@ -215,7 +445,13 @@ struct ScalingOptions {
 
 	void (*showToast)(HWND hwndTarget, std::wstring_view msg) noexcept = nullptr;
 	void (*showError)(HWND hwndTarget, ScalingError error) noexcept = nullptr;
+	void (*reportErrorDetails)(HWND hwndTarget, ScalingError error,
+		std::string_view context, uint32_t systemError) noexcept = nullptr;
 	void (*save)(const ScalingOptions& options, HWND hwndScaling) noexcept = nullptr;
+	bool (*requestEffectParameters)(
+		const ScalingOptions& sessionOptions,
+		EffectParametersRequest&& request
+	) noexcept = nullptr;
 
 	void Log() const noexcept;
 

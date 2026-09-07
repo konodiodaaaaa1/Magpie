@@ -6,12 +6,14 @@
     <CppWinRTOptimized>true</CppWinRTOptimized>
     <CppWinRTRootNamespaceAutoMerge>true</CppWinRTRootNamespaceAutoMerge>
     <CppWinRTGenerateWindowsMetadata>false</CppWinRTGenerateWindowsMetadata>
+    <CppWinRTEnablePlatformProjection>false</CppWinRTEnablePlatformProjection>
+    <CppWinRT_IncludePath>E:\Magpie-0.6.5-build\native-cppwinrt\union\</CppWinRT_IncludePath>
     <CppWinRTVerbosity>low</CppWinRTVerbosity>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{0e5205ae-dfa9-4cb8-b662-e43cd6512e2a}</ProjectGuid>
     <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
-    <IntDir>$(SolutionDir)\obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
-    <OutDir>$(SolutionDir)\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(BuildRoot)\obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
+    <OutDir>$(BuildRoot)\bin\$(Platform)\$(Configuration)\</OutDir>
     <GeneratedFilesDir>$(IntDir)\Generated Files\</GeneratedFilesDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -27,12 +29,13 @@
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="..\Common.Post.props" />
-    <Import Project="$(SolutionDir)\obj\$(Platform)\$(Configuration)\_ConanDeps\Magpie\conandeps.props" Condition="Exists('$(SolutionDir)\obj\$(Platform)\$(Configuration)\_ConanDeps\Magpie\conandeps.props')" />
+    <Import Project="$(BuildRoot)\obj\$(Platform)\$(Configuration)\_ConanDeps\Magpie\conandeps.props" Condition="Exists('$(BuildRoot)\obj\$(Platform)\$(Configuration)\_ConanDeps\Magpie\conandeps.props')" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>E:\Magpie-0.6.5-build\native-cppwinrt\union;include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions Condition="'$(EnableFrameTrace)' == 'true'">MP_ENABLE_FRAME_TRACE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <FxCompile>
       <ShaderModel>5.0</ShaderModel>
@@ -44,6 +47,7 @@
     </FxCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="HdrEffectBoundary.h" />
     <ClInclude Include="BackendDescriptorStore.h" />
     <ClInclude Include="CompSwapchainPresenter.h" />
     <ClInclude Include="CursorManager.h" />
@@ -59,6 +63,7 @@
     <ClInclude Include="EffectsProfiler.h" />
     <ClInclude Include="ExclModeHelper.h" />
     <ClInclude Include="FrameSourceBase.h" />
+    <ClInclude Include="FrameTrace.h" />
     <ClInclude Include="GDIFrameSource.h" />
     <ClInclude Include="GraphicsCaptureFrameSource.h" />
     <ClInclude Include="ImGuiBackend.h" />
@@ -68,7 +73,11 @@
     <ClInclude Include="include\DirectXHelper.h" />
     <ClInclude Include="include\EffectCompiler.h" />
     <ClInclude Include="include\EffectDesc.h" />
+    <ClInclude Include="include\EffectParameterValue.h" />
     <ClInclude Include="include\ScalingOptions.h" />
+    <ClInclude Include="include\EffectParameterPersistence.h" />
+    <ClInclude Include="include\EffectParameterRestart.h" />
+    <ClInclude Include="include\EffectParameterLocalization.h" />
     <ClInclude Include="include\ScalingRuntime.h" />
     <ClInclude Include="include\Win32Helper.h" />
     <ClInclude Include="include\WindowBase.h" />
@@ -88,27 +97,52 @@
     <ClInclude Include="YasHelper.h" />
     <ClInclude Include="DLSSSRUpscaler.h" />
     <ClInclude Include="DLSSFrameGenerator.h" />
+    <ClInclude Include="GroupBEffectProtocol.h" />
     <ClInclude Include="DLSSNRFilter.h" />
     <ClInclude Include="FrameGuidanceProvider.h" />
     <ClInclude Include="FrameGuidanceService.h" />
+    <ClInclude Include="MotionVectorRequest.h" />
+    <ClInclude Include="OpticalFlowSettings.h" />
+    <ClInclude Include="include\EffectParameterRules.h" />
+    <ClInclude Include="PresentationFrameRate.h" />
+    <ClInclude Include="FramePresentationTiming.h" />
+    <ClInclude Include="FramePacingWait.h" />
+    <ClInclude Include="include\FramePacingOptions.h" />
     <ClInclude Include="FrameGuidanceTypes.h" />
     <ClInclude Include="FrameGuidancePerformance.h" />
     <ClInclude Include="ZeroFrameGuidanceProvider.h" />
     <ClInclude Include="NvidiaOpticalFlowProvider.h" />
-    <ClInclude Include="DepthInferenceBackend.h" />
-    <ClInclude Include="DepthAnythingV2Provider.h" />
+    <ClInclude Include="AmdOpticalFlowProvider.h" />
     <ClInclude Include="FrameGuidanceDiagnostics.h" />
+    <ClInclude Include="PassThroughFrames.h" />
+    <ClInclude Include="include\EffectParameterResetGesture.h" />
     <ClInclude Include="FrameGuidanceD3D12Interop.h" />
+    <ClInclude Include="FSR2Upscaler.h" />
+    <ClInclude Include="FSR3Upscaler.h" />
     <ClInclude Include="FSR2ZeroMVUpscaler.h" />
     <ClInclude Include="FSR3ZeroMVUpscaler.h" />
-    <ClInclude Include="XeSSZeroMVUpscaler.h" />
     <ClInclude Include="HalfResOpticalFlow.h" />
+    <ClInclude Include="XeSSUpscaler.h" />
+    <ClInclude Include="XeSSZeroMVUpscaler.h" />
     <ClInclude Include="NativeEffectBackend.h" />
     <ClInclude Include="NativeEffectBackendFactory.h" />
     <ClInclude Include="NgxD3D12Core.h" />
     <ClInclude Include="RTXVideoDenoiser.h" />
+    <ClInclude Include="NvCVImageD3D11Proxy.h" Condition="$(EnableRTXVideoDenoise) And '$(Platform)' == 'x64'" />
+    <ClInclude Include="HdrFrame.h" />
+    <ClInclude Include="HdrColorTransform.h" />
+    <ClInclude Include="HdrProtocol.h" />
+    <ClInclude Include="HdrAdapterDispatcher.h" />
+    <ClInclude Include="EffectProtocolCatalogC.h" />
+    <ClInclude Include="HdrDiagnostics.h" />
+    <ClInclude Include="HdrCaptureProcessor.h" />
+    <ClInclude Include="HdrSurfaceAdapter.h" />
+    <ClInclude Include="HdrSourceTestBridge.h" />
+    <ClInclude Include="GroupAHdrRoutes.h" />
+    <ClInclude Include="GroupBHdrRoutes.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="HdrEffectBoundary.cpp" />
     <ClCompile Include="BackendDescriptorStore.cpp" />
     <ClCompile Include="CompSwapchainPresenter.cpp" />
     <ClCompile Include="CursorManager.cpp" />
@@ -124,6 +158,7 @@
     <ClCompile Include="EffectsProfiler.cpp" />
     <ClCompile Include="ExclModeHelper.cpp" />
     <ClCompile Include="FrameSourceBase.cpp" />
+    <ClCompile Include="FrameTrace.cpp" />
     <ClCompile Include="GDIFrameSource.cpp" />
     <ClCompile Include="GraphicsCaptureFrameSource.cpp" />
     <ClCompile Include="ImGuiBackend.cpp" />
@@ -134,6 +169,16 @@
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="HdrFrame.cpp" />
+    <ClCompile Include="HdrColorTransform.cpp" />
+    <ClCompile Include="HdrProtocol.cpp" />
+    <ClCompile Include="HdrAdapterDispatcher.cpp" />
+    <ClCompile Include="HdrDiagnostics.cpp" />
+    <ClCompile Include="HdrCaptureProcessor.cpp" />
+    <ClCompile Include="HdrSurfaceAdapter.cpp" />
+    <ClCompile Include="HdrSourceTestBridge.cpp" />
+    <ClCompile Include="GroupAHdrRoutes.cpp" />
+    <ClCompile Include="GroupBHdrRoutes.cpp" />
     <ClCompile Include="PresenterBase.cpp" />
     <ClCompile Include="Renderer.cpp" />
     <ClCompile Include="ScalingOptions.cpp" />
@@ -153,22 +198,48 @@
     <ClCompile Include="FrameGuidanceService.cpp" />
     <ClCompile Include="ZeroFrameGuidanceProvider.cpp" />
     <ClCompile Include="NvidiaOpticalFlowProvider.cpp" />
-    <ClCompile Include="DepthInferenceBackend.cpp" />
-    <ClCompile Include="DepthAnythingV2Provider.cpp" />
+    <ClCompile Include="AmdOpticalFlowProvider.cpp" />
     <ClCompile Include="FrameGuidanceDiagnostics.cpp" />
+    <ClCompile Include="PassThroughFrames.cpp" />
     <ClCompile Include="FrameGuidanceD3D12Interop.cpp" />
+    <ClCompile Include="FSR2Upscaler.cpp" />
+    <ClCompile Include="FSR3Upscaler.cpp" />
     <ClCompile Include="FSR2ZeroMVUpscaler.cpp" />
     <ClCompile Include="FSR3ZeroMVUpscaler.cpp" />
-    <ClCompile Include="XeSSZeroMVUpscaler.cpp" />
     <ClCompile Include="HalfResOpticalFlow.cpp" />
+    <ClCompile Include="XeSSUpscaler.cpp" />
+    <ClCompile Include="XeSSZeroMVUpscaler.cpp" />
     <ClCompile Include="NativeEffectBackendFactory.cpp" />
     <ClCompile Include="NgxD3D12Core.cpp" />
     <ClCompile Include="RTXVideoDenoiser.cpp" />
     <ClCompile Include="$(VFXSdkDir)\nvvfx\src\NVVideoEffectsProxy.cpp" Condition="$(EnableRTXVideoDenoise) And '$(Platform)' == 'x64'">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="$(VFXSdkDir)\nvvfx\src\nvCVImageProxy.cpp" Condition="$(EnableRTXVideoDenoise) And '$(Platform)' == 'x64'">
+    <ClCompile Include="NvCVImageD3D11Proxy.cpp" Condition="$(EnableRTXVideoDenoise) And '$(Platform)' == 'x64'" />
+    <ClCompile Include="$(FSR3SdkDir)\Kits\FidelityFX\api\internal\ffx_assert.cpp" Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="$(FSR3SdkDir)\Kits\FidelityFX\api\internal\ffx_message.cpp" Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="$(FSR3SdkDir)\Kits\FidelityFX\api\internal\ffx_object_management.cpp" Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="$(FSR3SdkDir)\Kits\FidelityFX\backend\dx12\ffx_backends_dx12.cpp" Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="$(FSR3SdkDir)\Kits\FidelityFX\backend\dx12\ffx_dx12.cpp" Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="$(FSR3SdkDir)\Kits\FidelityFX\framegeneration\fsr3\internal\ffx_opticalflow.cpp" Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <DisableSpecificWarnings>4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="$(FSR3SdkDir)\Kits\FidelityFX\framegeneration\fsr3\internal\ffx_opticalflow_shaderblobs.cpp" Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <DisableSpecificWarnings>4201;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -198,6 +269,19 @@
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="GenerateFidelityFXOpticalFlowShaders"
+          BeforeTargets="ClCompile"
+          Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">
+    <PropertyGroup>
+      <FidelityFXOpticalFlowScript Condition="Exists('$(SolutionDir)scripts\Generate-FidelityFXOpticalFlowShaders.ps1')">$(SolutionDir)scripts\Generate-FidelityFXOpticalFlowShaders.ps1</FidelityFXOpticalFlowScript>
+      <FidelityFXOpticalFlowScript Condition="'$(FidelityFXOpticalFlowScript)' == '' And Exists('$(SolutionDir)..\..\scripts\Generate-FidelityFXOpticalFlowShaders.ps1')">$(SolutionDir)..\..\scripts\Generate-FidelityFXOpticalFlowShaders.ps1</FidelityFXOpticalFlowScript>
+    </PropertyGroup>
+    <Error Condition="'$(FidelityFXOpticalFlowScript)' == ''" Text="Generate-FidelityFXOpticalFlowShaders.ps1 was not found from SolutionDir=$(SolutionDir)." />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(FidelityFXOpticalFlowScript)&quot; -SdkDirectory &quot;$(FSR3SdkDir)&quot; -OutputDirectory &quot;$(IntDir)FidelityFXOpticalFlow&quot; -DxcPath &quot;$(WindowsSdkDir)bin\$(WindowsTargetPlatformVersion)\x64\dxc.exe&quot;" />
+    <ItemGroup>
+      <FileWrites Include="$(IntDir)FidelityFXOpticalFlow\**\*" />
+    </ItemGroup>
+  </Target>
   <ImportGroup Label="ExtensionTargets">
     <Import Project="..\..\packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets" Condition="Exists('..\..\packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets')" />
     <Import Project="..\..\packages\Microsoft.Windows.CppWinRT.3.0.260520.1\build\native\Microsoft.Windows.CppWinRT.targets" Condition="Exists('..\..\packages\Microsoft.Windows.CppWinRT.3.0.260520.1\build\native\Microsoft.Windows.CppWinRT.targets')" />

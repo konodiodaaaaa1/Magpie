@@ -1,4 +1,6 @@
 #pragma once
+#include "MotionVectorRequest.h"
+#include "HdrFrame.h"
 
 namespace Magpie {
 
@@ -53,32 +55,6 @@ enum class FrameGuidanceMotionUnit : uint8_t {
 	SourcePixels
 };
 
-enum class FrameGuidanceDepthConvention : uint8_t {
-	RelativeInverse
-};
-
-struct FrameGuidanceRequirements {
-	bool zero = false;
-	bool motion = false;
-	bool depth = false;
-	uint32_t depthInferenceInterval = 1;
-
-	bool Any() const noexcept { return zero || motion || depth; }
-
-	void Merge(const FrameGuidanceRequirements& other) noexcept {
-		zero = zero || other.zero;
-		motion = motion || other.motion;
-		if (other.depth) {
-			depthInferenceInterval = depth ?
-				std::min(depthInferenceInterval, other.depthInferenceInterval) :
-				other.depthInferenceInterval;
-			depth = true;
-		}
-	}
-
-	bool operator==(const FrameGuidanceRequirements&) const noexcept = default;
-};
-
 struct FrameGuidanceSyncPoint {
 	// Null means that the texture is ordered on Renderer’s immediate D3D11
 	// context. Providers that execute elsewhere must publish a fence and value.
@@ -87,7 +63,10 @@ struct FrameGuidanceSyncPoint {
 };
 
 struct FrameGuidanceMetadata {
-	FrameGuidanceFrameId frameId = 0;
+    FrameGuidanceFrameId frameId = 0;
+    uint64_t captureSequence = 0;
+    uint64_t resourceGeneration = 0;
+    int64_t timestamp100ns = 0;
 	FrameGuidanceExtent sourceExtent{};
 	FrameGuidanceRegion validRegion{};
 	FrameGuidanceSyncPoint sync{};
@@ -118,16 +97,9 @@ struct FrameGuidanceView {
 	FrameGuidanceResource depth{};
 	FrameGuidanceResource motion{};
 	FrameGuidanceResource confidence{};
-	// Optional diagnostics supplied by learned depth providers. They are not
-	// part of the DLSS consumption contract.
-	FrameGuidanceResource rawDepth{};
-	FrameGuidanceResource depthResidual{};
 	FrameGuidanceMotionDirection motionDirection =
 		FrameGuidanceMotionDirection::CurrentToPrevious;
 	FrameGuidanceMotionUnit motionUnit = FrameGuidanceMotionUnit::SourcePixels;
-	FrameGuidanceDepthConvention depthConvention =
-		FrameGuidanceDepthConvention::RelativeInverse;
-	bool depthInverted = true;
 	bool requiresHistoryReset = false;
 
 	bool IsValidFor(
@@ -147,21 +119,16 @@ inline FrameGuidanceView SelectFrameGuidanceChannels(
 	const FrameGuidanceView& zero,
 	FrameGuidanceFrameId frameId,
 	FrameGuidanceExtent extent,
-	bool useMotion,
-	bool useDepth
+	bool useMotion
 ) noexcept {
 	if (!zero.IsValidFor(frameId, extent)) return {};
 
 	FrameGuidanceView selected = produced.IsValidFor(frameId, extent) ?
 		produced : zero;
+	selected.depth = zero.depth;
 	if (!useMotion) {
 		selected.motion = zero.motion;
 		selected.confidence = zero.confidence;
-	}
-	if (!useDepth) {
-		selected.depth = zero.depth;
-		selected.rawDepth = {};
-		selected.depthResidual = {};
 	}
 	selected.requiresHistoryReset =
 		selected.depth.metadata.requiresHistoryReset ||
@@ -173,19 +140,18 @@ inline FrameGuidanceView SelectFrameGuidanceChannels(
 struct MotionVectorProviderOutput;
 
 struct FrameGuidanceFrame {
-	ID3D11Texture2D* color = nullptr;
-	FrameGuidanceFrameId frameId = 0;
+    ID3D11Texture2D* color = nullptr;
+    FrameGuidanceFrameId frameId = 0;
+    uint64_t captureSequence = 0;
+    uint64_t resourceGeneration = 0;
+    int64_t timestamp100ns = 0;
+    ColorDescription colorDescription{};
 	FrameGuidanceExtent sourceExtent{};
 	FrameGuidanceRegion validRegion{};
-	// Motion is produced first so depth providers can reproject their previous
-	// result without owning or instantiating a motion provider.
-	const MotionVectorProviderOutput* motionGuidance = nullptr;
 };
 
 struct DepthProviderOutput {
 	FrameGuidanceResource depth{};
-	FrameGuidanceResource rawDepth{};
-	FrameGuidanceResource depthResidual{};
 };
 
 struct MotionVectorProviderOutput {

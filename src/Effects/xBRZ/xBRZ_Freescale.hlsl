@@ -292,6 +292,9 @@ void Pass2(uint2 blockStart, uint3 threadId) {
 	float2 inputPt = GetInputPt();
 	float2 outputPt = GetOutputPt();
 	float2 pos = (gxy + 0.5f) * outputPt;
+	#ifdef MP_HDR_COMPATIBILITY
+	const float sourceAlpha = INPUT.SampleLevel(sam, pos, 0).a;
+	#endif
 
 	//---------------------------------------
 	// Input Pixel Mapping: -|B|-
@@ -385,5 +388,5 @@ void Pass2(uint2 blockStart, uint3 threadId) {
 		res = lerp(res, blendPix, get_left_ratio(f, origin, direction, scale));
 	}
 
-	OUTPUT[gxy] = float4(res, 1);
+	OUTPUT[gxy] = float4(res, MP_HDR_ALPHA);
 }

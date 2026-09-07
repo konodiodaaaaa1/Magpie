@@ -364,4 +364,10 @@
   <data name="Settings_General_ShowNotifyIcon.Description" xml:space="preserve">
     <value>Magpie a főablak bezárása után is a háttérben fog futni</value>
   </data>
+  <data name="Profile_General_HdrCompatibility.Header" xml:space="preserve">
+    <value>HDR-kompatibilitás</value>
+  </data>
+  <data name="Profile_General_HdrCompatibility.Description" xml:space="preserve">
+    <value>Engedélyezi a kísérleti HDR-rögzítés és effektusok közötti kompatibilitási útvonalat. Csak HDR-támogatás tesztelésekor kapcsold be.</value>
+  </data>
 </root>

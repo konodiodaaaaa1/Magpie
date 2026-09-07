@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "FrameTrace.h"
 #include "AdaptivePresenter.h"
 #include "DeviceResources.h"
 #include "Logger.h"
@@ -12,6 +13,9 @@ static bool ShouldLogPresentationDiagnostic(uint32_t count) noexcept {
 }
 
 bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
+	Logger::Get().Info(fmt::format("VRR request: enabled={} tearingSupported={} path={}",
+		ScalingWindow::Get().Options().isVRREnabled, _deviceResources->IsTearingSupported(),
+		ScalingWindow::Get().Options().IsDirectFlipDisabled() ? "DirectComposition (VRR unavailable)" : "DXGI"));
 	if (ScalingWindow::Get().Options().IsDirectFlipDisabled()) {
 		// 禁用 DirectFlip 时始终使用 DirectComposition 呈现
 		if (!_ResizeDCompVisual(hwndAttach)) {
@@ -29,7 +33,9 @@ bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
 	DXGI_SWAP_CHAIN_DESC1 sd{
 		.Width = (UINT)rendererSize.cx,
 		.Height = (UINT)rendererSize.cy,
-		.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+		.Format = ScalingWindow::Get().Options().IsHdrCompatibilityEnabled()
+			? DXGI_FORMAT_R16G16B16A16_FLOAT
+			: DXGI_FORMAT_R8G8B8A8_UNORM,
 		.SampleDesc = {
 			.Count = 1
 		},
@@ -45,8 +51,8 @@ bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
 		// 渲染每帧之前都会清空后缓冲区，因此无需 DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
 		.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
 		.AlphaMode = DXGI_ALPHA_MODE_IGNORE,
-		// 只要显卡支持始终启用 DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING 以支持可变刷新率
-		.Flags = UINT((_deviceResources->IsTearingSupported() ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0)
+		// VRR is opt-in; creation and resize preserve the same tearing capability.
+		.Flags = UINT((_deviceResources->IsTearingSupported() && ScalingWindow::Get().Options().isVRREnabled ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0)
 		| DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
 	};
 
@@ -64,27 +70,35 @@ bool AdaptivePresenter::_Initialize(HWND hwndAttach) noexcept {
 		Logger::Get().ComError("创建交换链失败", hr);
 		return false;
 	}
-
 	_dxgiSwapChain = dxgiSwapChain.try_as<IDXGISwapChain4>();
 	if (!_dxgiSwapChain) {
 		Logger::Get().Error("获取 IDXGISwapChain2 失败");
 		return false;
 	}
+	if (ScalingWindow::Get().Options().IsHdrCompatibilityEnabled()) {
+		hr = _dxgiSwapChain->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709);
+		if (FAILED(hr)) {
+			Logger::Get().ComError("设置 HDR 交换链色彩空间失败", hr);
+			return false;
+		}
+	}
 
-	uint32_t maximumFrameLatency = bufferCount - 1;
+	const auto& options = ScalingWindow::Get().Options();
+	uint32_t maximumFrameLatency = options.isFrontEdgeSyncEnabled && !options.IsBenchmarkMode()
+		? 1u : bufferCount - 1;
 	for (const EffectOption& effect : ScalingWindow::Get().Options().effects) {
 		if (effect.name == "DLSSFG\\DLSS_FrameGeneration") {
 			maximumFrameLatency = 1;
 			break;
 		}
 	}
-	// DLSSFG submits multiple output frames for each captured frame. Restrict
-	// its swap-chain queue to one frame so presentation cannot add another
-	// multi-frame latency queue; other effects retain the original behavior.
-	_dxgiSwapChain->SetMaximumFrameLatency(maximumFrameLatency);
-	if (maximumFrameLatency == 1) {
-		Logger::Get().Info("DLSSFG swap-chain maximum frame latency: 1");
+	// Bound driver-side queuing when the application already paces submissions.
+	hr = _dxgiSwapChain->SetMaximumFrameLatency(maximumFrameLatency);
+	if (FAILED(hr)) {
+		Logger::Get().ComError("SetMaximumFrameLatency failed", hr);
+		return false;
 	}
+	Logger::Get().Info(fmt::format("Swap-chain maximum frame latency: {}", maximumFrameLatency));
 
 	_frameLatencyWaitableObject.reset(_dxgiSwapChain->GetFrameLatencyWaitableObject());
 	if (!_frameLatencyWaitableObject) {
@@ -134,19 +148,11 @@ bool AdaptivePresenter::BeginFrame(
 	} else {
 		drawOffset = {};
 
-		if (!_isframeLatencyWaited) {
-			const DWORD waitResult = WaitForSingleObject(
-				_frameLatencyWaitableObject.get(), 1000);
+		{
+			const DWORD waitResult = _frameLatencyGate.TryAcquire(_frameLatencyWaitableObject.get());
 			if (waitResult == WAIT_TIMEOUT) {
-				++_frameLatencyWaitTimeoutCount;
-				if (ShouldLogPresentationDiagnostic(_frameLatencyWaitTimeoutCount)) {
-					const ScalingWindow& scalingWindow = ScalingWindow::Get();
-					Logger::Get().Warn(fmt::format(
-						"Swap-chain frame-latency wait timed out: count={} visible={} firstFrame={}",
-						_frameLatencyWaitTimeoutCount,
-						IsWindowVisible(scalingWindow.Handle()) != FALSE,
-						scalingWindow.IsFirstFramePending()));
-				}
+				FrameTrace::Mark(FrameTrace::Event::CapacityBusy);
+				return false;
 			} else if (waitResult == WAIT_FAILED) {
 				Logger::Get().Win32Error("Swap-chain frame-latency wait failed");
 				return false;
@@ -156,13 +162,23 @@ bool AdaptivePresenter::BeginFrame(
 					waitResult));
 				return false;
 			}
-			_isframeLatencyWaited = true;
 		}
 
 		frameTex = _backBuffer;
 		frameRtv = _backBufferRtv;
 	}
 	
+	return true;
+}
+
+bool AdaptivePresenter::WaitForFrameCapacity(DWORD timeout) noexcept {
+	if (_isDCompPresenting) return false;
+	DWORD result = WAIT_TIMEOUT;
+	if (!_frameLatencyGate.Wait(_frameLatencyWaitableObject.get(), timeout, result)) return false;
+	if (result == WAIT_FAILED) {
+		Logger::Get().Win32Error("Swap-chain capacity event wait failed");
+		return false;
+	}
 	return true;
 }
 
@@ -194,6 +210,7 @@ bool AdaptivePresenter::EndFrame(bool waitForGpu) noexcept {
 		// 实用价值。
 
 		// 等待渲染完成
+		FrameTrace::Scope traceGpuWait(FrameTrace::Event::PresentGpuWait);
 		_WaitForGpu();
 
 		// 等待 DWM 开始合成新一帧
@@ -201,14 +218,25 @@ bool AdaptivePresenter::EndFrame(bool waitForGpu) noexcept {
 	}
 
 	if (_isDCompPresenting) {
+		FrameTrace::Scope traceCommit(FrameTrace::Event::DcompCommit);
 		const HRESULT commitResult = _dcompDevice->Commit();
+		traceCommit.Data(commitResult);
+		traceCommit.End();
 		if (FAILED(commitResult)) {
 			Logger::Get().ComError("DirectComposition Commit failed", commitResult);
 		}
+		_lastPresentedFrameCount = SUCCEEDED(endDrawResult) && SUCCEEDED(commitResult) ? 1u : 0u;
 		return SUCCEEDED(endDrawResult) && SUCCEEDED(commitResult);
 	} else {
 		// 两个垂直同步之间允许渲染数帧，SyncInterval = 0 只呈现最新的一帧，旧帧被丢弃
-		const HRESULT presentResult = _dxgiSwapChain->Present(0, 0);
+		const auto tracePresent = FrameTrace::Tick();
+		const UINT flags = ScalingWindow::Get().Options().isVRREnabled &&
+			_deviceResources->IsTearingSupported() ? DXGI_PRESENT_ALLOW_TEARING : 0;
+		_lastSubmissionTime = std::chrono::steady_clock::now();
+		const HRESULT presentResult = _dxgiSwapChain->Present(0, flags);
+		FrameTrace::Presentation(tracePresent, FrameTrace::Tick(), presentResult,
+			reinterpret_cast<uintptr_t>(_dxgiSwapChain.get()));
+		_lastPresentedFrameCount = presentResult == S_OK ? 1u : 0u;
 		if (presentResult == DXGI_STATUS_OCCLUDED) {
 			++_presentOccludedCount;
 			if (ShouldLogPresentationDiagnostic(_presentOccludedCount)) {
@@ -230,7 +258,7 @@ bool AdaptivePresenter::EndFrame(bool waitForGpu) noexcept {
 					scalingWindow.IsFirstFramePending()), presentResult);
 			}
 		}
-		_isframeLatencyWaited = false;
+		_frameLatencyGate.Reset();
 
 		// 丢弃渲染目标的内容
 		_deviceResources->GetD3DDC()->DiscardView(_backBufferRtv.get());
@@ -285,7 +313,10 @@ void AdaptivePresenter::OnEndResize(bool& shouldRedraw) noexcept {
 
 	shouldRedraw = true;
 
-	_ResizeSwapChain();
+	if (!_ResizeSwapChain()) {
+		shouldRedraw = false;
+		return;
+	}
 	_isDCompPresenting = false;
 	// 交换链呈现新帧后再清除 DirectCompostion 内容，确保无缝切换
 	_isSwitchingToSwapChain = true;
@@ -294,9 +325,11 @@ void AdaptivePresenter::OnEndResize(bool& shouldRedraw) noexcept {
 bool AdaptivePresenter::_ResizeSwapChain() noexcept {
 	assert(_dxgiSwapChain);
 
-	if (!_isframeLatencyWaited) {
-		_frameLatencyWaitableObject.wait(1000);
-		_isframeLatencyWaited = true;
+	// ResizeBuffers retains this swap chain and its already acquired token.
+	const DWORD capacity = _frameLatencyGate.TryAcquire(_frameLatencyWaitableObject.get(), 1000);
+	if (capacity != WAIT_OBJECT_0) {
+		Logger::Get().Error(fmt::format("Swap-chain resize capacity wait failed: 0x{:x}", capacity));
+		return false;
 	}
 
 	_backBuffer = nullptr;
@@ -309,7 +342,7 @@ bool AdaptivePresenter::_ResizeSwapChain() noexcept {
 		(UINT)swapChainSize.cx,
 		(UINT)swapChainSize.cy,
 		DXGI_FORMAT_UNKNOWN,
-		UINT((_deviceResources->IsTearingSupported() ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0)
+		UINT((_deviceResources->IsTearingSupported() && ScalingWindow::Get().Options().isVRREnabled ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0)
 		| DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
 	);
 	if (FAILED(hr)) {
@@ -383,7 +416,9 @@ bool AdaptivePresenter::_ResizeDCompVisual(HWND hwndAttach) noexcept {
 		hr = _dcompDevice->CreateVirtualSurface(
 			(UINT)rendererSize.cx,
 			(UINT)rendererSize.cy,
-			DXGI_FORMAT_R8G8B8A8_UNORM,
+			ScalingWindow::Get().Options().IsHdrCompatibilityEnabled()
+				? DXGI_FORMAT_R16G16B16A16_FLOAT
+				: DXGI_FORMAT_R8G8B8A8_UNORM,
 			DXGI_ALPHA_MODE_IGNORE,
 			_dcompSurface.put()
 		);

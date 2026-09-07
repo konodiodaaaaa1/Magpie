@@ -639,6 +639,12 @@
   <data name="Profile_General_3DGameMode.Header" xml:space="preserve">
     <value>Modo de jogo 3D</value>
   </data>
+  <data name="Profile_General_HdrCompatibility.Header" xml:space="preserve">
+    <value>HDR compatibility</value>
+  </data>
+  <data name="Profile_General_HdrCompatibility.Description" xml:space="preserve">
+    <value>Enable the experimental HDR capture-to-effect compatibility path. Keep disabled unless you are testing HDR support</value>
+  </data>
   <data name="Profile_Cursor_DrawCursor_Interpolation_NearestNeighbor.Content" xml:space="preserve">
     <value>Maior proximidade</value>
   </data>

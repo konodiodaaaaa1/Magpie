@@ -1,0 +1,63 @@
+{
+  "scalingModes": [
+    {
+      "name": "DLSSFG",
+      "effects": [
+        {
+          "name": "FrameRate_Filter",
+          "parameters": {
+            "targetFrameRate": 60
+          }
+        },
+        {
+          "name": "DLSSFG\\DLSS_FrameGeneration",
+          "parameters": {
+            "multiplier": 2,
+            "motionVectorQuality": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "XeSSFG",
+      "effects": [
+        {
+          "name": "FrameRate_Filter",
+          "parameters": {
+            "targetFrameRate": 60
+          }
+        },
+        {
+          "name": "XeSSFG\\XeSS_FrameGeneration_x2_ZeroMV",
+          "parameters": {
+            "opticalFlowMethod": 0,
+            "amdOpticalFlowMode": 1,
+            "nvidiaOpticalFlowQuality": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "DLSSNR",
+      "effects": [
+        {
+          "name": "DLSSNR\\DLSSNR_AI_Filter",
+          "parameters": {
+            "style": 0,
+            "intensity": 1,
+            "residualSaturation": 1,
+            "residualLightness": 1,
+            "shadowStructureMultiplier": 1,
+            "reflectionGlowMultiplier": 1,
+            "localToneStrength": 1,
+            "localStructureStrength": 1,
+            "skinStructureStrength": -1,
+            "useAutoMask": 0,
+            "uiCorrection": 0,
+            "motionVectorQuality": 2
+          }
+        }
+      ]
+    }
+  ]
+}

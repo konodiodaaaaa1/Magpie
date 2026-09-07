@@ -1,7 +1,10 @@
 #pragma once
 #include "ScalingOptions.h"
+#include "EffectDesc.h"
+#include "EffectParameterRestart.h"
 #include "SrcTracker.h"
 #include "WindowBase.h"
+#include <deque>
 
 namespace Magpie {
 
@@ -36,9 +39,23 @@ public:
 
 	void ToggleScaling(bool isWindowedMode) noexcept;
 
+	// Shared with the main-thread task-switch hook, including initialization,
+	// toolbar mode changes and the interval between automatic restarts.
+	static bool SessionWindowedMode() noexcept {
+		return _sessionWindowedMode.load(std::memory_order_acquire);
+	}
+	static void SessionWindowedMode(bool windowed) noexcept {
+		_sessionWindowedMode.store(windowed, std::memory_order_release);
+	}
+
 	void SwitchToolbarState() noexcept;
 
 	void Render() noexcept;
+	void RenderOverlay() noexcept;
+	bool RenderNextDLSSFGFrame() noexcept;
+	bool HasPendingDLSSFGFrame() const noexcept { return !_dlssFgFrameJobs.empty(); }
+	bool HasPendingFrontendRender() const noexcept { return _frontendRenderPending; }
+	bool HasUrgentOverlayInput() const noexcept;
 
 	const RECT& RendererRect() const noexcept {
 		return _rendererRect;
@@ -72,13 +89,25 @@ public:
 		return *_cursorManager;
 	}
 
+	class Renderer* TryGetRenderer() noexcept { return _renderer.get(); }
+	class CursorManager* TryGetCursorManager() noexcept { return _cursorManager.get(); }
+
 	bool IsSrcRepositioning() const noexcept {
 		return _isSrcRepositioning;
 	}
 
 	void RestartAfterSrcRepositioned() noexcept;
+	void RestartWithEffectParameters(
+		std::vector<EffectOption>&& effects,
+		FrameSyncSettings frameSync
+	) noexcept;
 
 	void CleanAfterSrcRepositioned() noexcept;
+	bool QueueEffectParameterRestart(uint32_t effectIdx, uint32_t parameterIdx, float value,
+		bool waitForOverlaySave) noexcept;
+	void ProcessPendingParameterRestart() noexcept;
+	bool IsWaitingForParameterRestart() const noexcept { return _parameterRestartQueue.IsWaiting(); }
+	void UpdateWaitingEffectParameter(uint32_t effectIdx, const std::string& parameter, float value) noexcept;
 
 	bool IsResizingOrMoving() const noexcept {
 		return _isResizingOrMoving;
@@ -106,6 +135,7 @@ private:
 	~ScalingWindow() noexcept;
 
 	ScalingError _StartImpl(HWND hwndSrc) noexcept;
+	void _CancelParameterRestart() noexcept;
 
 	// 确保渲染窗口长宽比不变，且限制最小和最大尺寸。必须提供 width 和 height 之一，另一个
 	// 应为 0。如果 isRendererSize 为真，传入的 width 和 height 为渲染矩形尺寸，否则为缩
@@ -172,6 +202,7 @@ private:
 	void _DelayedStop(bool onSrcHung = false, bool onSrcRepositioning = false) const noexcept;
 
 	static inline std::atomic<uint32_t> _runId = 0;
+	static inline std::atomic<bool> _sessionWindowedMode = false;
 	static inline winrt::DispatcherQueue _dispatcher{ nullptr };
 
 	RECT _windowRect{};
@@ -184,6 +215,14 @@ private:
 	uint32_t _nonTopBorderThicknessInClient = 0;
 
 	ScalingOptions _options;
+	EffectParameterRestartQueue _parameterRestartQueue;
+	uint64_t _parameterRestartSaveRevision = 0;
+	struct RestartParameter {
+		EffectParameterDesc description;
+		EffectParameterApplyMode applyMode;
+	};
+	std::vector<std::vector<RestartParameter>> _restartParameters;
+	bool _reopenEffectParameters = false;
 	std::unique_ptr<class Renderer> _renderer;
 	std::unique_ptr<class CursorManager> _cursorManager;
 
@@ -210,6 +249,12 @@ private:
 	bool _shouldWaitForRender = false;
 	bool _areResizeHelperWindowsVisible = false;
 	bool _isSrcRepositioning = false;
+	struct DLSSFGFrameJob {
+		uint32_t sharedTextureSlot = 0;
+		uint32_t sharedTextureGeneration = 0;
+	};
+	std::deque<DLSSFGFrameJob> _dlssFgFrameJobs;
+	bool _frontendRenderPending = false;
 };
 
 }

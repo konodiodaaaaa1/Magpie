@@ -18,8 +18,8 @@ public:
 	~FrameGuidanceService();
 	FrameGuidanceService(const FrameGuidanceService&) = delete;
 	FrameGuidanceService& operator=(const FrameGuidanceService&) = delete;
-	bool SetDepthProvider(std::unique_ptr<IDepthProvider> provider) noexcept;
 	bool SetMotionVectorProvider(
+		MotionVectorRequest request,
 		std::unique_ptr<IMotionVectorProvider> provider
 	) noexcept;
 
@@ -31,23 +31,33 @@ public:
 	const FrameGuidanceView& BeginFrame(
 		FrameGuidanceFrameId frameId,
 		ID3D11Texture2D* sourceFrame,
-		const FrameGuidanceRequirements& requirements
+		const FrameGuidanceRequirements& requirements,
+		uint64_t captureSequence = 0,
+		uint64_t resourceGeneration = 0,
+		int64_t timestamp100ns = 0,
+		const ColorDescription& colorDescription = {}
 	) noexcept;
 	bool Resize(
 		FrameGuidanceExtent sourceExtent,
-		FrameGuidanceFrameId currentFrameId,
 		const FrameGuidanceRequirements& requirements
 	) noexcept;
 	void ResetHistory(FrameGuidanceResetReason reason) noexcept;
 	FrameGuidanceConsumerViews GetConsumerViews(
 		FrameGuidanceFrameId frameId,
-		FrameGuidanceExtent targetExtent
+		FrameGuidanceExtent targetExtent,
+		MotionVectorRequest request
 	) noexcept;
 
 	const FrameGuidanceView& View() const noexcept { return _view; }
 	const FrameGuidanceView& ZeroView() const noexcept { return _zeroView; }
 	FrameGuidanceExtent SourceExtent() const noexcept { return _sourceExtent; }
 	bool IsInitialized() const noexcept { return _resources != nullptr; }
+	OpticalFlowMethod InitializationFailedMethod() const noexcept {
+		return _initializationFailedMethod;
+	}
+	OpticalFlowInitializationError InitializationError() const noexcept {
+		return _initializationError;
+	}
 
 private:
 	struct AdapterCache;
@@ -56,13 +66,22 @@ private:
 		const FrameGuidanceFrame& frame,
 		const FrameGuidanceRequirements& requirements
 	) noexcept;
+	void _RollbackInitialization() noexcept;
 
 	DeviceResources* _resources = nullptr;
 	ZeroFrameGuidanceResources _zeroResources;
 	ZeroDepthProvider _zeroDepthProvider;
 	ZeroMotionVectorProvider _zeroMotionProvider;
-	std::unique_ptr<IDepthProvider> _depthProvider;
-	std::unique_ptr<IMotionVectorProvider> _motionProvider;
+	struct ProviderEntry {
+		MotionVectorRequest request{};
+		std::unique_ptr<IMotionVectorProvider> provider;
+		FrameGuidanceView view{};
+		bool ready = false;
+		bool fallbackActive = false;
+		uint32_t consecutiveFailures = 0;
+	};
+	std::vector<ProviderEntry> _providers;
+	MotionVectorRequest _selectedMotionRequest{};
 	FrameGuidanceExtent _sourceExtent{};
 	FrameGuidanceView _view{};
 	FrameGuidanceView _zeroView{};
@@ -71,8 +90,9 @@ private:
 	FrameGuidanceFrameId _cachedFrameId = 0;
 	bool _hasCachedFrame = false;
 	bool _hasLoggedRequirements = false;
-	bool _depthProviderReady = false;
-	bool _motionProviderReady = false;
+	OpticalFlowMethod _initializationFailedMethod = OpticalFlowMethod::None;
+	OpticalFlowInitializationError _initializationError =
+		OpticalFlowInitializationError::None;
 	std::unique_ptr<AdapterCache> _adapterCache;
 };
 

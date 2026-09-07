@@ -23,12 +23,12 @@
       <AdditionalIncludeDirectories Condition="$(EnableDLSSNR) And '$(Platform)' == 'x64'">$(DLSSSdkDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="$(EnableNvidiaOpticalFlow) And '$(Platform)' == 'x64'">MP_ENABLE_NVIDIA_OPTICAL_FLOW;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="$(EnableNvidiaOpticalFlow) And '$(Platform)' == 'x64'">$(NvidiaOpticalFlowSdkDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="$(EnableDepthAnythingV2) And '$(Platform)' == 'x64'">MP_ENABLE_DEPTH_ANYTHING_V2;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories Condition="$(EnableDepthAnythingV2) And '$(Platform)' == 'x64'">$(OnnxRuntimeDirectMLDir)\..\..\..\build\native\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="$(EnableFSR2ZeroMV) And '$(Platform)' == 'x64'">MP_ENABLE_FSR2_ZEROMV;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="$(EnableFSR2ZeroMV) And '$(Platform)' == 'x64'">$(FSR2SdkDir)\src\ffx-fsr2-api;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="$(EnableFSR3ZeroMV) And '$(Platform)' == 'x64'">MP_ENABLE_FSR3_ZEROMV;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="$(EnableFSR3ZeroMV) And '$(Platform)' == 'x64'">$(FSR3SdkDir)\Kits\FidelityFX\api\include;$(FSR3SdkDir)\Kits\FidelityFX\upscalers\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">MP_ENABLE_AMD_OPTICAL_FLOW;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories Condition="$(EnableAmdOpticalFlow) And '$(Platform)' == 'x64'">$(FSR3SdkDir)\Kits\FidelityFX\api\include;$(FSR3SdkDir)\Kits\FidelityFX\api\internal;$(FSR3SdkDir)\Kits\FidelityFX\backend\dx12;$(FSR3SdkDir)\Kits\FidelityFX\framegeneration\fsr3\include;$(FSR3SdkDir)\Kits\FidelityFX\framegeneration\fsr3\internal;$(IntDir)FidelityFXOpticalFlow;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="$(EnableXeSSZeroMV) And '$(Platform)' == 'x64'">MP_ENABLE_XESS_ZEROMV;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="$(EnableXeSSZeroMV) And '$(Platform)' == 'x64'">$(XeSSSdkDir)\inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 	  <PreprocessorDefinitions Condition="$(EnableXeSSFrameGeneration) And '$(Platform)' == 'x64'">MP_ENABLE_XESS_FRAME_GENERATION;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -59,6 +59,9 @@
     </ResourceCompile>
     <Link>
       <GenerateDebugInformation Condition="'$(DisablePDB)' == 'true'">false</GenerateDebugInformation>
+      <GenerateDebugInformation Condition="'$(GenerateReleaseSymbols)' == 'true'">true</GenerateDebugInformation>
+      <GenerateMapFile Condition="'$(GenerateReleaseSymbols)' == 'true'">true</GenerateMapFile>
+      <MapFileName Condition="'$(GenerateReleaseSymbols)' == 'true'">$(OutDir)$(TargetName).map</MapFileName>
       <AdditionalOptions Condition="'$(ReproducibleBuild)' == 'true'">/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <Lib>
@@ -110,7 +113,7 @@
   <Import Project="$(MSBuildThisFileDirectory)\Shared\Shared.vcxitems" Label="Shared" />
 
   <!-- Conan 依赖 -->
-  <Import Project="$(SolutionDir)\obj\$(Platform)\$(Configuration)\_ConanDeps\$(MSBuildProjectName)\conandeps.props" Condition="Exists('$(SolutionDir)\obj\$(Platform)\$(Configuration)\_ConanDeps\$(MSBuildProjectName)\conandeps.props')" />
+  <Import Project="$(BuildRoot)\obj\$(Platform)\$(Configuration)\_ConanDeps\$(MSBuildProjectName)\conandeps.props" Condition="Exists('$(BuildRoot)\obj\$(Platform)\$(Configuration)\_ConanDeps\$(MSBuildProjectName)\conandeps.props')" />
 
   <!-- HybridCRT -->
   <Import Project="$(MSBuildThisFileDirectory)\HybridCRT.props" />

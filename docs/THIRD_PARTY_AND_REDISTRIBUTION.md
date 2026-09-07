@@ -26,9 +26,6 @@ This document is an engineering inventory, not legal advice. A component being d
 | NVIDIA DLSS/NGX and DLSS Frame Generation | NVIDIA RTX SDK license | Do not commit SDK headers, libraries, models, or runtime DLLs | **Unresolved/high risk when combined with GPLv3 Magpie; do not publish such a combined binary without a dedicated review or permission** |
 | NVIDIA DLSSNR experimental runtime | Locally supplied NVIDIA proprietary runtime; the tested file may be official or community-modified, and there is no public DLSSNR SDK contract | Do not commit `nvngx_dlssnr.dll`; configure it as a local build input | **Internal testing only until NVIDIA redistribution permission and GPL compatibility are reviewed** |
 | NVIDIA Optical Flow driver API | NVIDIA driver component plus locally supplied SDK-compatible headers | Do not commit or package `nvofapi64.dll`; load the installed display driver's copy from System32 | The driver DLL is not redistributed by this project; review any header provenance before publishing source |
-| Depth Anything V2 Small ONNX | Apache-2.0 model family; exact converted artifact and upstream notices must be verified | Keep the model in the local `dependencies/` cache and copy it only for explicitly enabled test builds | Do not publish the model until the exact ONNX artifact's license and notice chain have been reviewed |
-| ONNX Runtime DirectML | Microsoft-distributed runtime with MIT and bundled third-party notices | Acquire through the pinned NuGet package; do not commit runtime binaries | Ship only the native files permitted by the package terms and include all supplied notices |
-| ONNX Runtime TensorRT, TensorRT, CUDA and cuDNN | Mixed Microsoft/NVIDIA runtime terms | Keep all runtimes local; generate TensorRT engine caches per machine and never commit them | **Internal testing only until every binary's redistribution terms and GPL compatibility are reviewed** |
 | NVIDIA Video Effects / Maxine runtime and models | NVIDIA proprietary and AI-product terms, plus bundled third-party notices | Do not commit wheel, models, SDK, or runtime binaries | **Unresolved/high risk; review the exact runtime/model terms and GPL compatibility before release** |
 | OptiScaler reference checkout | Reference only; not linked into Magpie | Do not copy its source or binaries without a separate review | Not part of the package |
 | Microsoft/Windows redistributable runtime files | Per Microsoft redistribution terms | Do not vendor development SDKs | Ship only files Microsoft marks redistributable and retain required notices |
@@ -39,8 +36,6 @@ The controlling texts are the exact license files supplied with each SDK/runtime
 - `dependencies/FSR2-DX11-source/.../LICENSE.txt`
 - `dependencies/FSR-SDK-v2.3.0/docs/license.md`
 - `dependencies/XeSS-SDK-3.0.1/LICENSE.txt`
-- `dependencies/DepthAnythingV2/onnx-community-depth-anything-v2-small/LICENSE.Depth-Anything-V2.txt`
-- `dependencies/onnxruntime/*/LICENSE*`
 - `dependencies/nvidia-vfx-python/.../licenses/packaging/`
 
 The community-modified `nvngx_dlssnr.dll` used by the v0.5.7 experimental binary package is a separate Release asset, not project source. It must remain absent from this repository and from GitHub's generated source archives.
@@ -75,7 +70,7 @@ The safe default for this experimental fork is:
 - [ ] Every shipped third-party binary has an identified redistributable license and required notice.
 - [ ] GPLv3 corresponding-source obligations are satisfied for the exact binary.
 - [ ] NVIDIA-enabled and FSR4-override binaries have received a separate compatibility/permission review.
-- [ ] The ZIP hash is recorded in the GitHub Release notes.
+- [ ] Local SHA256SUMS.txt records the exact release asset hashes.
 
 - [ ] `git status` 和 `git ls-files` 中没有本机 SDK、运行库、模型或配置文件。
 - [ ] 分发包由 `scripts/Build-Release.ps1` 从明确的提交构建。
@@ -83,4 +78,4 @@ The safe default for this experimental fork is:
 - [ ] 每个第三方二进制都已确认可再分发条款及必须携带的声明。
 - [ ] 对该二进制履行 GPLv3 对应源码义务。
 - [ ] 含 NVIDIA 后端或 FSR4 绕过逻辑的包已经单独完成兼容性/权限审核。
-- [ ] GitHub Release 说明中记录 ZIP 的 SHA-256。
+- [ ] 本地 SHA256SUMS.txt 记录各 Release 附件的准确哈希。

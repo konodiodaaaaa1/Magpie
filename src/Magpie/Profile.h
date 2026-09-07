@@ -96,6 +96,8 @@ struct Profile {
 		graphicsCardId = other.graphicsCardId;
 		maxFrameRate = other.maxFrameRate;
 		multiMonitorUsage = other.multiMonitorUsage;
+		preferredMonitorId = other.preferredMonitorId;
+		preferredMonitorName = other.preferredMonitorName;
 		cursorInterpolationMode = other.cursorInterpolationMode;
 		launchParameters = other.launchParameters;
 		destAlignment = other.destAlignment;
@@ -110,6 +112,7 @@ struct Profile {
 	DEFINE_FLAG_ACCESSOR(IsCaptureTitleBar, ScalingFlags::CaptureTitleBar, scalingFlags)
 	DEFINE_FLAG_ACCESSOR(IsAdjustCursorSpeed, ScalingFlags::AdjustCursorSpeed, scalingFlags)
 	DEFINE_FLAG_ACCESSOR(IsDirectFlipDisabled, ScalingFlags::DisableDirectFlip, scalingFlags)
+	DEFINE_FLAG_ACCESSOR(IsHdrCompatibilityEnabled, ScalingFlags::EnableHdrCompatibility, scalingFlags)
 
 	// 默认规则 name、pathRule 和 classNameRule 均为空
 	std::wstring name;
@@ -138,6 +141,8 @@ struct Profile {
 	CaptureMethod captureMethod = CaptureMethod::GraphicsCapture;
 	GraphicsCardId graphicsCardId;
 	MultiMonitorUsage multiMonitorUsage = MultiMonitorUsage::Closest;
+	std::wstring preferredMonitorId;
+	std::wstring preferredMonitorName;
 	CursorInterpolationMode cursorInterpolationMode = CursorInterpolationMode::NearestNeighbor;
 
 	// 10~1000

@@ -3,6 +3,9 @@
 #include "Event.h"
 #include "Shortcut.h"
 #include "Profile.h"
+#include "ConfigPersistence.h"
+#include "FramePacingOptions.h"
+#include <memory>
 #include <rapidjson/document.h>
 
 namespace Magpie {
@@ -32,6 +35,7 @@ struct _AppSettingsData {
 	// the main configuration folder so one-time default changes do not repeat.
 	uint32_t _experimentalDlssnrSettingsVersion = 2;
 	uint32_t _experimentalDlssSrSettingsVersion = 1;
+	uint32_t _experimentalDepthRemovalVersion = 1;
 
 	// LocalizationService::SupportedLanguages 索引
 	// -1 表示使用系统设置
@@ -53,6 +57,9 @@ struct _AppSettingsData {
 		DuplicateFrameDetectionMode::Dynamic;
 
 	float _minFrameRate = 10.0f;
+	bool _isFrontEdgeSyncEnabled = true;
+	bool _isVRREnabled = false;
+	float _frontEdgeSyncFrameRate = 60.0f;
 
 	ToolbarState _fullscreenInitialToolbarState = ToolbarState::AutoHide;
 	ToolbarState _windowedInitialToolbarState = ToolbarState::AutoHide;
@@ -71,7 +78,7 @@ struct _AppSettingsData {
 	bool _isFontCacheDisabled = false;
 	bool _isSaveEffectSources = false;
 	bool _isWarningsAreErrors = false;
-	bool _isAllowScalingMaximized = false;
+	bool _isAllowScalingMaximized = true;
 	bool _isSimulateExclusiveFullscreen = false;
 	bool _isInlineParams = false;
 	bool _isShowNotifyIcon = true;
@@ -96,7 +103,7 @@ public:
 
 	bool Save() noexcept;
 
-	winrt::fire_and_forget SaveAsync() noexcept;
+	winrt::fire_and_forget SaveAsync(std::function<void(bool)> onCompleted = {}) noexcept;
 
 	const std::filesystem::path& ConfigDir() const noexcept {
 		return _configDir;
@@ -281,6 +288,8 @@ public:
 		return _scalingModes;
 	}
 
+	void ResetScalingModes() noexcept;
+
 	bool IsAutoCheckForUpdates() const noexcept {
 		return _isAutoCheckForUpdates;
 	}
@@ -326,6 +335,28 @@ public:
 		SaveAsync();
 	}
 
+
+	bool IsFrontEdgeSyncEnabled() const noexcept { return _isFrontEdgeSyncEnabled; }
+	void IsFrontEdgeSyncEnabled(bool value) noexcept {
+		if (_isFrontEdgeSyncEnabled == value) return;
+		_isFrontEdgeSyncEnabled = value;
+		FrontEdgeSyncChanged.Invoke();
+		SaveAsync();
+	}
+	bool IsVRREnabled() const noexcept { return _isVRREnabled; }
+	void IsVRREnabled(bool value) noexcept {
+		_isVRREnabled = value;
+		SaveAsync();
+	}
+	float FrontEdgeSyncFrameRate() const noexcept { return _frontEdgeSyncFrameRate; }
+	void FrontEdgeSyncFrameRate(float value) noexcept {
+		value = SanitizePresentationFrameRate(value);
+		if (_frontEdgeSyncFrameRate == value) return;
+		_frontEdgeSyncFrameRate = value;
+		FrontEdgeSyncChanged.Invoke();
+		SaveAsync();
+	}
+
 	float MinFrameRate() const noexcept {
 		return _minFrameRate;
 	}
@@ -361,6 +392,7 @@ public:
 		return _overlayOptions;
 	}
 
+	Event<> FrontEdgeSyncChanged;
 	Event<AppTheme> ThemeChanged;
 	Event<winrt::Magpie::ShortcutAction> ShortcutChanged;
 	Event<uint32_t> CountdownSecondsChanged;
@@ -374,7 +406,7 @@ private:
 	AppSettings(AppSettings&&) = delete;
 
 	void _UpdateWindowPlacement() noexcept;
-	bool _Save(const _AppSettingsData& data) noexcept;
+	static std::string _Serialize(const _AppSettingsData& data);
 
 	void _LoadSettings(const rapidjson::GenericObject<true, rapidjson::Value>& root) noexcept;
 	bool _LoadProfile(
@@ -388,8 +420,7 @@ private:
 	bool _UpdateConfigPath(std::filesystem::path* existingConfigPath = nullptr) noexcept;
 	bool _isConfigMigrationNeeded = false;
 
-	// 用于同步保存
-	wil::srwlock _saveLock;
+	std::shared_ptr<ConfigSaveState> _saveState = std::make_shared<ConfigSaveState>();
 };
 
 }

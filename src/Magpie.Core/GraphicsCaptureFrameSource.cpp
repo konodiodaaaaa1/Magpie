@@ -1,5 +1,7 @@
 #include "pch.h"
+#include "FrameTrace.h"
 #include "GraphicsCaptureFrameSource.h"
+#include "CommonSharedConstants.h"
 #include "DeviceResources.h"
 #include "DirectXHelper.h"
 #include "Logger.h"
@@ -17,6 +19,22 @@ using namespace Windows::Graphics::DirectX::Direct3D11;
 }
 
 namespace Magpie {
+
+// The callback owns only this signal, never the capture source or D3D context.
+// A late callback after Close/restart cannot touch the new session or a freed
+// object, and its handle stays alive until the callback returns.
+struct GraphicsCaptureFrameSource::FrameReadySignal {
+	wil::unique_event_nothrow event;
+#ifdef MP_ENABLE_FRAME_TRACE
+	bool traceEnabled = false;
+	std::atomic<int64_t> firstNotification = 0;
+	std::atomic<uint64_t> notifications = 0;
+#endif
+};
+
+HANDLE GraphicsCaptureFrameSource::FrameArrivedEvent() const noexcept {
+	return _frameReady ? _frameReady->event.get() : nullptr;
+}
 
 bool GraphicsCaptureFrameSource::_Initialize() noexcept {
 	ID3D11Device5* d3dDevice = _deviceResources->GetD3DDevice();
@@ -60,7 +78,9 @@ bool GraphicsCaptureFrameSource::_Initialize() noexcept {
 
 	_output = DirectXHelper::CreateTexture2D(
 		d3dDevice,
-		DXGI_FORMAT_B8G8R8A8_UNORM,
+		ScalingWindow::Get().Options().IsHdrCompatibilityEnabled()
+			? DXGI_FORMAT_R16G16B16A16_FLOAT
+			: DXGI_FORMAT_B8G8R8A8_UNORM,
 		_frameBox.right - _frameBox.left,
 		_frameBox.bottom - _frameBox.top,
 		D3D11_BIND_SHADER_RESOURCE
@@ -74,60 +94,158 @@ bool GraphicsCaptureFrameSource::_Initialize() noexcept {
 	return true;
 }
 
+ColorDescription GraphicsCaptureFrameSource::_GetSourceColorDescription() const noexcept {
+	ColorDescription result = FrameSourceBase::_GetSourceColorDescription();
+	if (!ScalingWindow::Get().Options().IsHdrCompatibilityEnabled()) {
+		return result;
+	}
+
+	// WGC's FP16 capture surface uses linear scRGB. The monitor metadata still
+	// supplies the display peak used by normalization.
+	result.dxgiColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+	result.primaries = HdrColorPrimaries::Rec709;
+	result.transfer = HdrTransferFunction::Linear;
+	result.range = HdrColorRange::SceneLinear;
+	result.isSceneReferred = true;
+	result.isInferred = true;
+	result.preExposure = 1.0f;
+	return result;
+}
+
 bool GraphicsCaptureFrameSource::Start() noexcept {
 	_DisableRoundCornerInWin11();
-	return _StartCapture();
+	return _StartCapture("initial start");
 }
 
 FrameSourceState GraphicsCaptureFrameSource::_Update() noexcept {
-	if (!_captureSession) {
-		return FrameSourceState::Waiting;
+	FrameTrace::Scope traceAcquire(FrameTrace::Event::WgcAcquire);
+	if (_captureFailed) return FrameSourceState::Error;
+	if (!_captureSession || !_captureFramePool) {
+		return _FailCapture("WGC capture session unavailable", E_UNEXPECTED);
 	}
 
-	winrt::Direct3D11CaptureFrame frame = _captureFramePool.TryGetNextFrame();
-	if (!frame) {
-		// 因为已通过 FrameArrived 注册回调，所以每当有新帧时会有新消息到达
-		return FrameSourceState::Waiting;
-	}
+	try {
+		// Reset BEFORE inspecting the pool. Notifications concurrent with the
+		// drain remain signaled, including a frame arriving after the final poll.
+		// Resetting after the drain would lose that wakeup.
+		ResetEvent(_frameReady->event.get());
+#ifdef MP_ENABLE_FRAME_TRACE
+		const auto notification = _frameReady->firstNotification.exchange(0);
+		const auto notifications = _frameReady->notifications.exchange(0);
+		if (notification) FrameTrace::Record(FrameTrace::Event::WgcNotificationWait,
+			notification, FrameTrace::Tick(), FrameTrace::Frame(), notifications);
+#endif
+		winrt::Direct3D11CaptureFrame frame = _captureFramePool.TryGetNextFrame();
+		if (frame) {
+			uint32_t dequeued = 1;
+			// Drain at most the pool capacity, so a fast producer cannot keep us here.
+			for (uint32_t i = 1; i < 4; ++i) {
+				auto nextFrame = _captureFramePool.TryGetNextFrame();
+				if (!nextFrame) break;
+				frame.Close();
+				frame = std::move(nextFrame);
+				++dequeued;
+			}
+			FrameTrace::Mark(FrameTrace::Event::WgcDequeue, dequeued, _captureSessionGeneration);
 
-	// 取最新帧，帧率较低时可以有效降低延迟
-	while (true) {
-		if (winrt::Direct3D11CaptureFrame nextFrame = _captureFramePool.TryGetNextFrame()) {
-			frame = std::move(nextFrame);
-		} else {
-			break;
+			const auto content = frame.ContentSize();
+			const int64_t timestamp = frame.SystemRelativeTime().count();
+			FrameTrace::Mark(FrameTrace::Event::WgcFrame, timestamp, _captureSequence);
+			const auto access = frame.Surface().as<
+				::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
+			winrt::com_ptr<ID3D11Texture2D> texture;
+			winrt::check_hresult(access->GetInterface(IID_PPV_ARGS(&texture)));
+			D3D11_TEXTURE2D_DESC desc{};
+			texture->GetDesc(&desc);
+			// Content may legitimately exceed pool size. Only the copied crop must
+			// fit both the valid content and the actual surface allocation.
+			const bool valid = content.Width > 0 && content.Height > 0 &&
+				_frameBox.left < _frameBox.right && _frameBox.top < _frameBox.bottom &&
+				_frameBox.front == 0 && _frameBox.back == 1 &&
+				_frameBox.right <= UINT(content.Width) && _frameBox.bottom <= UINT(content.Height) &&
+				_frameBox.right <= desc.Width && _frameBox.bottom <= desc.Height;
+			const bool staleTimestamp = timestamp <= 0 ||
+				(_lastFrameTimestamp100ns && timestamp <= _lastFrameTimestamp100ns);
+			if (!valid || staleTimestamp) {
+				FrameTrace::Mark(FrameTrace::Event::WgcRejected, !valid ? 1 : 2, timestamp);
+				_InterruptCapture(!valid ? "invalid content bounds" : "non-advancing capture timestamp");
+				if (++_rejectedFrames == 1) {
+					Logger::Get().Warn(fmt::format(
+						"WGC rejected frame: session={} sequence={} content={}x{} surface={}x{} crop={},{},{},{} timestamp100ns={} previousTimestamp100ns={}",
+						_captureSessionGeneration, _captureSequence, content.Width, content.Height,
+						desc.Width, desc.Height, _frameBox.left, _frameBox.top, _frameBox.right,
+						_frameBox.bottom, timestamp, _lastFrameTimestamp100ns));
+					// The frontend's existing SrcTracker path owns geometry changes and
+					// effect-chain rebuilding. Wake it even when no frame can be published.
+					PostMessage(ScalingWindow::Get().Handle(),
+						CommonSharedConstants::WM_FRONTEND_RENDER, 0, 0);
+					_lastRecoveryGeometryCheck = std::chrono::steady_clock::now();
+				}
+				frame.Close();
+			} else {
+				// Preserve the long-pause optimization, with a 5-second debounce.
+				// WGC can legitimately skip hundreds of milliseconds for static or
+				// throttled windows; those gaps must not reset FG history and flash.
+				if (_lastFrameTimestamp100ns &&
+					timestamp - _lastFrameTimestamp100ns >= 50'000'000) {
+					_InterruptCapture("capture long-pause discontinuity");
+				}
+				_deviceResources->GetD3DDC()->CopySubresourceRegion(
+					_output.get(), 0, 0, 0, 0, texture.get(), 0, &_frameBox);
+				frame.Close();
+				_captureTimestamp100ns = timestamp;
+				_lastFrameTimestamp100ns = timestamp;
+				if (_captureInterrupted) {
+					Logger::Get().Info(fmt::format(
+						"WGC valid capture restored: session={} sequence={} content={}x{} surface={}x{} rejected={} timestamp100ns={} recoveryMs={:.3f}",
+						_captureSessionGeneration, _captureSequence, content.Width, content.Height,
+						desc.Width, desc.Height, _rejectedFrames, timestamp,
+						std::chrono::duration<double, std::milli>(
+							std::chrono::steady_clock::now() - _recoveryStarted).count()));
+					_FinishRecovery();
+				}
+				return FrameSourceState::NewFrame;
+			}
 		}
+
+		// Only an explicitly interrupted sequence has a deadline. A healthy static
+		// window is allowed to provide no new frames indefinitely.
+		if (_captureInterrupted && !_recoveryTimer) {
+			return _FailCapture("WGC recovery timer creation", _captureErrorCode);
+		}
+		if (_captureInterrupted && std::chrono::steady_clock::now() - _lastRecoveryGeometryCheck >= 250ms) {
+			// A transition frame can arrive before Win32 reports the new geometry.
+			// Continue the existing frontend size/minimize checks while no output
+			// is published (including when the minimum-FPS timer is overdue).
+			PostMessage(ScalingWindow::Get().Handle(),
+				CommonSharedConstants::WM_FRONTEND_RENDER, 0, 0);
+			_lastRecoveryGeometryCheck = std::chrono::steady_clock::now();
+		}
+		if (_captureInterrupted && std::chrono::steady_clock::now() - _recoveryStarted >= 5s) {
+			return _FailCapture(_rejectedFrames ? "WGC valid content/timestamp recovery timed out" :
+				"WGC first frame after start/restart timed out", HRESULT_FROM_WIN32(ERROR_TIMEOUT));
+		}
+		return FrameSourceState::Waiting;
+	} catch (const winrt::hresult_error& e) {
+		return _FailCapture("WGC acquire/copy/close frame", e.code());
 	}
-
-	// 从帧获取 IDXGISurface
-	winrt::IDirect3DSurface d3dSurface = frame.Surface();
-
-	winrt::com_ptr<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess> dxgiInterfaceAccess(
-		d3dSurface.try_as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>()
-	);
-
-	winrt::com_ptr<ID3D11Texture2D> withFrame;
-	HRESULT hr = dxgiInterfaceAccess->GetInterface(IID_PPV_ARGS(&withFrame));
-	if (FAILED(hr)) {
-		Logger::Get().ComError("从获取 IDirect3DSurface 获取 ID3D11Texture2D 失败", hr);
-		return FrameSourceState::Error;
-	}
-
-	_deviceResources->GetD3DDC()->CopySubresourceRegion(_output.get(), 0, 0, 0, 0, withFrame.get(), 0, &_frameBox);
-
-	return FrameSourceState::NewFrame;
 }
 
 void GraphicsCaptureFrameSource::OnCursorVisibilityChanged(bool isVisible, bool onDestory) noexcept {
 	// 显示光标时必须重启捕获
 	if (isVisible) {
-		_StopCapture();
+		const bool stopped = _StopCapture();
 		
 		if (onDestory) {
 			// FIXME: 这里尝试修复拖动窗口时光标不显示的问题，但有些环境下不起作用
 			SystemParametersInfo(SPI_SETCURSORS, 0, nullptr, 0);
 		} else {
-			_StartCapture();
+			if (!stopped) {
+				_FailCapture("WGC close before cursor restart", _captureErrorCode);
+			} else if (!_captureFailed) {
+				// _StartCapture records a persistent failure; _Update propagates it.
+				_StartCapture("cursor visible");
+			}
 		}
 	}
 }
@@ -313,22 +431,54 @@ bool GraphicsCaptureFrameSource::_TryCreateGraphicsCaptureItem(IGraphicsCaptureI
 	return true;
 }
 
-bool GraphicsCaptureFrameSource::_StartCapture() noexcept {
+bool GraphicsCaptureFrameSource::_StartCapture(const char* reason) noexcept {
+	FrameTrace::Scope traceStart(FrameTrace::Event::WgcStart);
 	if (_captureSession) {
 		return true;
+	}
+	_InterruptCapture(reason);
+	++_captureSessionGeneration;
+	_lastFrameTimestamp100ns = 0;
+	if (!_recoveryTimer) {
+		_FailCapture("WGC recovery timer creation", _captureErrorCode);
+		return false;
 	}
 
 	try {
 		// 创建帧缓冲池。帧的尺寸和 _captureItem.Size() 不同
-		_captureFramePool = winrt::Direct3D11CaptureFramePool::Create(
+		_frameReady = std::make_shared<FrameReadySignal>();
+		_frameReady->event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+		if (!_frameReady->event) {
+			_FailCapture("WGC frame notification event creation", HRESULT_FROM_WIN32(GetLastError()));
+			return false;
+		}
+#ifdef MP_ENABLE_FRAME_TRACE
+		_frameReady->traceEnabled = FrameTrace::Enabled();
+#endif
+		_captureFramePool = winrt::Direct3D11CaptureFramePool::CreateFreeThreaded(
 			_wrappedD3DDevice,
-			winrt::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+			ScalingWindow::Get().Options().IsHdrCompatibilityEnabled()
+				? winrt::DirectXPixelFormat::R16G16B16A16Float
+				: winrt::DirectXPixelFormat::B8G8R8A8UIntNormalized,
 			4,	// 帧的缓存数量，更大的值有利于在低帧率下降低延迟
 			{ (int)_frameBox.right, (int)_frameBox.bottom } // 帧的尺寸为包含源窗口的最小尺寸
 		);
 
-		// 注册回调是为了确保每当有新的帧时会向当前线程发送消息，回调中什么也不做
-		_captureFramePool.FrameArrived([](const auto&, const auto&) {});
+		// Wake the backend directly, independently of DispatcherQueue dispatch.
+		// Only the backend dequeues frames and submits D3D work.
+		_frameArrivedToken = _captureFramePool.FrameArrived(
+			[signal = _frameReady](const auto&, const auto&) noexcept {
+#ifdef MP_ENABLE_FRAME_TRACE
+				if (signal->traceEnabled) {
+					LARGE_INTEGER now{};
+					QueryPerformanceCounter(&now);
+					int64_t empty = 0;
+					signal->firstNotification.compare_exchange_strong(empty, now.QuadPart);
+					signal->notifications.fetch_add(1);
+				}
+#endif
+				SetEvent(signal->event.get());
+			});
 
 		_captureSession = _captureFramePool.CreateCaptureSession(_captureItem);
 
@@ -358,26 +508,75 @@ bool GraphicsCaptureFrameSource::_StartCapture() noexcept {
 
 		_captureSession.StartCapture();
 	} catch (const winrt::hresult_error& e) {
-		Logger::Get().Info(StrHelper::Concat("Graphics Capture 失败: ", StrHelper::UTF16ToUTF8(e.message())));
+		_FailCapture("WGC start/restart capture", e.code());
 		return false;
 	}
 
+	Logger::Get().Info(fmt::format("WGC session started: session={} sequence={} reason={}",
+		_captureSessionGeneration, _captureSequence, reason));
+	Logger::Get().Info("WGC delivery: free-threaded frame notification + waitable event");
 	return true;
 }
 
-void GraphicsCaptureFrameSource::_StopCapture() noexcept {
-	if (_captureSession) {
-		_captureSession.Close();
-		_captureSession = nullptr;
+bool GraphicsCaptureFrameSource::_StopCapture() noexcept {
+	FrameTrace::Scope traceClose(FrameTrace::Event::WgcClose);
+	// Detach first and attempt both closes even if one fails. Never leave a
+	// partially created session looking like a healthy, empty frame pool.
+	bool success = true;
+	auto close = [&](auto object, const char* operation) {
+		if (!object) return;
+		try {
+			object.Close();
+		} catch (const winrt::hresult_error& e) {
+			Logger::Get().ComError(operation, e.code());
+			_captureErrorCode = e.code();
+			success = false;
+		}
+	};
+	auto pool = std::exchange(_captureFramePool, nullptr);
+	if (pool && _frameArrivedToken.value) {
+		pool.FrameArrived(std::exchange(_frameArrivedToken, {}));
 	}
-	if (_captureFramePool) {
-		_captureFramePool.Close();
-		_captureFramePool = nullptr;
+	close(std::exchange(_captureSession, nullptr), "WGC close capture session");
+	close(std::move(pool), "WGC close frame pool");
+	_frameReady.reset();
+	return success;
+}
+
+void GraphicsCaptureFrameSource::_InterruptCapture(const char* reason) noexcept {
+	if (_captureInterrupted) return;
+	_captureInterrupted = true;
+	++_captureSequence;
+	_rejectedFrames = 0;
+	_recoveryStarted = std::chrono::steady_clock::now();
+	// Wake the backend even before its first frame, when StepTimer uses WaitMessage.
+	_recoveryTimer = SetTimer(nullptr, 0, 250, nullptr);
+	if (!_recoveryTimer) {
+		const DWORD error = GetLastError();
+		_captureErrorCode = HRESULT_FROM_WIN32(error ? error : ERROR_NOT_ENOUGH_MEMORY);
 	}
+	Logger::Get().Info(fmt::format("WGC capture interrupted: session={} sequence={} reason={}",
+		_captureSessionGeneration, _captureSequence, reason));
+}
+
+void GraphicsCaptureFrameSource::_FinishRecovery() noexcept {
+	_captureInterrupted = false;
+	if (_recoveryTimer) KillTimer(nullptr, std::exchange(_recoveryTimer, 0));
+}
+
+FrameSourceState GraphicsCaptureFrameSource::_FailCapture(const char* operation, HRESULT hr) noexcept {
+	_captureFailed = true;
+	_StopCapture();
+	_FinishRecovery();
+	_captureErrorContext = operation;
+	_captureErrorCode = hr;
+	Logger::Get().ComError(operation, hr);
+	return FrameSourceState::Error;
 }
 
 GraphicsCaptureFrameSource::~GraphicsCaptureFrameSource() {
 	_StopCapture();
+	_FinishRecovery();
 
 	const HWND hwndSrc = ScalingWindow::Get().SrcTracker().Handle();
 

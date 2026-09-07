@@ -376,4 +376,10 @@
   <data name="About_OtherLinks.Header" xml:space="preserve">
     <value>სხვა ბმულები</value>
   </data>
+  <data name="Profile_General_HdrCompatibility.Header" xml:space="preserve">
+    <value>HDR თავსებადობა</value>
+  </data>
+  <data name="Profile_General_HdrCompatibility.Description" xml:space="preserve">
+    <value>ჩართავს ექსპერიმენტულ HDR გადაღება-ეფექტის თავსებადობის გზას. გამორთული დატოვეთ, თუ HDR მხარდაჭერას არ ამოწმებთ.</value>
+  </data>
 </root>

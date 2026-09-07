@@ -64,6 +64,11 @@ void Pass1(uint2 blockStart, uint3 threadId) {
 
 	float srcX = (gxy.x >> 1) + 0.5f;
 	float srcY = (gxy.y >> 1) + 0.5f;
+	// MMPX makes RGB-only decisions. Preserve the source pixel alpha across
+	// the four generated subpixels instead of manufacturing an opaque result.
+	#ifdef MP_HDR_COMPATIBILITY
+	const float sourceAlpha = INPUT.SampleLevel(sam, float2(srcX, srcY) * GetInputPt(), 0).a;
+	#endif
 
 	float3 A = src(srcX - 1, srcY - 1), B = src(srcX, srcY - 1), C = src(srcX + 1, srcY - 1);
 	float3 D = src(srcX - 1, srcY + 0), E = src(srcX, srcY + 0), F = src(srcX + 1, srcY + 0);
@@ -119,14 +124,14 @@ void Pass1(uint2 blockStart, uint3 threadId) {
 	} // not constant
 
 	// Write four pixels at once
-	OUTPUT[gxy] = float4(J, 1);
+	OUTPUT[gxy] = float4(J, MP_HDR_ALPHA);
 
 	++gxy.x;
-	OUTPUT[gxy] = float4(K, 1);
+	OUTPUT[gxy] = float4(K, MP_HDR_ALPHA);
 
 	++gxy.y;
-	OUTPUT[gxy] = float4(M, 1);
+	OUTPUT[gxy] = float4(M, MP_HDR_ALPHA);
 
 	--gxy.x;
-	OUTPUT[gxy] = float4(L, 1);
+	OUTPUT[gxy] = float4(L, MP_HDR_ALPHA);
 }

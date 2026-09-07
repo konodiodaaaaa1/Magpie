@@ -36,6 +36,9 @@ EffectDrawer::~EffectDrawer() {
 	for (uint32_t i = 1; i < textureCount; ++i) {
 		_descriptorStore->RemoveCache(_textures[i].get());
 	}
+	if (_hdrOutput && (_textures.size() < 2 || _hdrOutput.get() != _textures[1].get())) {
+		_descriptorStore->RemoveCache(_hdrOutput.get());
+	}
 }
 
 bool EffectDrawer::Initialize(
@@ -47,6 +50,11 @@ bool EffectDrawer::Initialize(
 ) noexcept {
 	_d3dDC = deviceResources.GetD3DDC();
 	_descriptorStore = &descriptorStore;
+	_hdrEnabled = ScalingWindow::Get().Options().IsHdrCompatibilityEnabled();
+	if (_hdrEnabled && !_hdrSurfaceAdapter.Initialize(deviceResources, descriptorStore)) {
+		Logger::Get().Error("初始化 HDR 效果边界适配器失败");
+		return false;
+	}
 
 	SIZE inputSize{};
 	{
@@ -78,12 +86,28 @@ bool EffectDrawer::Initialize(
 	// 创建中间纹理
 	// 第一个为 INPUT，第二个为 OUTPUT
 	_textures.resize(desc.textures.size());
-	_textures[0].copy_from(*inOutTexture);
+	_hdrInputSource = *inOutTexture;
+	D3D11_TEXTURE2D_DESC sourceDesc{};
+	(*inOutTexture)->GetDesc(&sourceDesc);
+	const DXGI_FORMAT effectInputFormat =
+		_GetHdrInputFormat(desc);
+	if (!_hdrEnabled) {
+		_textures[0].copy_from(*inOutTexture);
+	} else {
+		_textures[0] = DirectXHelper::CreateTexture2D(
+			deviceResources.GetD3DDevice(), effectInputFormat,
+			sourceDesc.Width, sourceDesc.Height,
+			D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+		if (!_textures[0]) {
+			Logger::Get().Error("创建 HDR 效果输入纹理失败");
+			return false;
+		}
+	}
 
-	// 创建输出纹理，格式始终是 DXGI_FORMAT_R8G8B8A8_UNORM
+	// 创建效果内部输出纹理；HDR 模式另建 canonical FP16 输出。
 	_textures[1] = DirectXHelper::CreateTexture2D(
 		deviceResources.GetD3DDevice(),
-		EffectHelper::FORMAT_DESCS[(uint32_t)desc.textures[1].format].dxgiFormat,
+		_GetHdrOutputFormat(desc),
 		outputSize.cx,
 		outputSize.cy,
 		D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS
@@ -96,6 +120,23 @@ bool EffectDrawer::Initialize(
 	}
 	if (!ClearEffectTexture(_d3dDC, descriptorStore, _textures[1].get())) {
 		return false;
+	}
+	if (_hdrEnabled) {
+		const D3D11_TEXTURE2D_DESC outputDesc = [&]() {
+			D3D11_TEXTURE2D_DESC result{};
+			_textures[1]->GetDesc(&result);
+			return result;
+		}();
+		_hdrOutput = DirectXHelper::CreateTexture2D(
+			deviceResources.GetD3DDevice(),
+			DXGI_FORMAT_R16G16B16A16_FLOAT,
+			outputDesc.Width, outputDesc.Height,
+			D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+		if (!_hdrOutput || !ClearEffectTexture(_d3dDC, descriptorStore, _hdrOutput.get())) {
+			Logger::Get().Error("创建 HDR 效果输出纹理失败");
+			return false;
+		}
+		*inOutTexture = _hdrOutput.get();
 	}
 
 	for (size_t i = 2; i < desc.textures.size(); ++i) {
@@ -191,15 +232,26 @@ bool EffectDrawer::Initialize(
 }
 
 void EffectDrawer::Draw(EffectsProfiler& profiler) const noexcept {
+	if (!PrepareHdrInput()) {
+		Logger::Get().Error("准备 HDR 效果输入失败");
+		return;
+	}
 	_PrepareForDraw();
 
 	for (uint32_t i = 0; i < _dispatches.size(); ++i) {
 		_DrawPass(i);
 		profiler.OnEndPass(_d3dDC);
 	}
+	if (!CompleteHdrOutput()) {
+		Logger::Get().Error("完成 HDR 效果输出失败");
+	}
 }
 
 void EffectDrawer::DrawForExport(const EffectDesc& desc, uint32_t passIdx) const noexcept {
+	if (!PrepareHdrInput()) {
+		Logger::Get().Error("准备 HDR 导出输入失败");
+		return;
+	}
 	_PrepareForDraw();
 
 	for (uint32_t i : _CalcPassesToDrawForExport(desc, passIdx)) {
@@ -215,17 +267,35 @@ bool EffectDrawer::ResizeTextures(
 ) noexcept {
 	bool anyChange = false;
 
-	if (*inOutTexture != _textures[0].get()) {
-		_textures[0].copy_from(*inOutTexture);
-		anyChange = true;
-	}
-
 	SIZE inputSize{};
-	{
-		D3D11_TEXTURE2D_DESC inputDesc;
-		_textures[0]->GetDesc(&inputDesc);
-		inputSize = { (LONG)inputDesc.Width, (LONG)inputDesc.Height };
+	D3D11_TEXTURE2D_DESC inputDesc{};
+	(*inOutTexture)->GetDesc(&inputDesc);
+	_hdrInputSource = *inOutTexture;
+	if (!_hdrEnabled) {
+		if (*inOutTexture != _textures[0].get()) {
+			_textures[0].copy_from(*inOutTexture);
+			anyChange = true;
+		}
+	} else {
+		const DXGI_FORMAT effectInputFormat =
+			_GetHdrInputFormat(desc);
+		D3D11_TEXTURE2D_DESC currentInput{};
+		if (_textures[0]) _textures[0]->GetDesc(&currentInput);
+		if (!_textures[0] || currentInput.Format != effectInputFormat ||
+			currentInput.Width != inputDesc.Width || currentInput.Height != inputDesc.Height) {
+			if (_textures[0]) _descriptorStore->RemoveCache(_textures[0].get());
+			_textures[0] = DirectXHelper::CreateTexture2D(
+				deviceResources.GetD3DDevice(), effectInputFormat,
+				inputDesc.Width, inputDesc.Height,
+				D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+			if (!_textures[0]) {
+				Logger::Get().Error("调整 HDR 效果输入纹理失败");
+				return false;
+			}
+			anyChange = true;
+		}
 	}
+	inputSize = { (LONG)inputDesc.Width, (LONG)inputDesc.Height };
 
 	const SIZE outputSize = _CalcOutputSize(desc, option, inputSize);
 	if (outputSize.cx <= 0 || outputSize.cy <= 0) {
@@ -238,10 +308,14 @@ bool EffectDrawer::ResizeTextures(
 
 	if ((LONG)texDesc.Width != outputSize.cx || (LONG)texDesc.Height != outputSize.cy) {
 		_descriptorStore->RemoveCache(_textures[1].get());
+		if (_hdrOutput && _hdrOutput.get() != _textures[1].get()) {
+			_descriptorStore->RemoveCache(_hdrOutput.get());
+			_hdrOutput = nullptr;
+		}
 
 		_textures[1] = DirectXHelper::CreateTexture2D(
 			deviceResources.GetD3DDevice(),
-			texDesc.Format,
+			_GetHdrOutputFormat(desc),
 			outputSize.cx,
 			outputSize.cy,
 			texDesc.BindFlags
@@ -258,7 +332,38 @@ bool EffectDrawer::ResizeTextures(
 		anyChange = true;
 	}
 
-	*inOutTexture = _textures[1].get();
+	if (_hdrEnabled) {
+		if (!_hdrOutput) {
+			_hdrOutput = DirectXHelper::CreateTexture2D(
+				deviceResources.GetD3DDevice(),
+				DXGI_FORMAT_R16G16B16A16_FLOAT,
+				outputSize.cx, outputSize.cy,
+				D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+			if (!_hdrOutput || !ClearEffectTexture(_d3dDC, *_descriptorStore, _hdrOutput.get())) {
+				Logger::Get().Error("调整 HDR 效果输出纹理失败");
+				return false;
+			}
+		} else {
+			D3D11_TEXTURE2D_DESC hdrOutputDesc{};
+			_hdrOutput->GetDesc(&hdrOutputDesc);
+			if (hdrOutputDesc.Width != (UINT)outputSize.cx ||
+				hdrOutputDesc.Height != (UINT)outputSize.cy) {
+				_descriptorStore->RemoveCache(_hdrOutput.get());
+				_hdrOutput = DirectXHelper::CreateTexture2D(
+					deviceResources.GetD3DDevice(),
+					DXGI_FORMAT_R16G16B16A16_FLOAT,
+					outputSize.cx, outputSize.cy,
+					D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+				if (!_hdrOutput || !ClearEffectTexture(_d3dDC, *_descriptorStore, _hdrOutput.get())) {
+					Logger::Get().Error("调整 HDR 效果输出尺寸失败");
+					return false;
+				}
+			}
+		}
+		*inOutTexture = _hdrOutput.get();
+	} else {
+		*inOutTexture = _textures[1].get();
+	}
 
 	for (size_t i = 2; i < _textures.size(); ++i) {
 		const std::pair<std::string, std::string>& sizeExpr = desc.textures[i].sizeExpr;
@@ -323,6 +428,185 @@ bool EffectDrawer::ResizeTextures(
 	}
 
 	return true;
+}
+
+bool EffectDrawer::_UsesDirectHdrPath() const noexcept {
+	if (!_hdrEnabled || !_hdrBoundary.prepared || _textures.size() < 2 ||
+		!_textures[0] || !_textures[1]) {
+		return false;
+	}
+
+	const HdrAdapterProfile profile = _hdrBoundary.plan.profile;
+	if (profile != HdrAdapterProfile::DirectFP16 &&
+		profile != HdrAdapterProfile::ConditionalFP16 &&
+		profile != HdrAdapterProfile::PresentationTerminal) {
+		return false;
+	}
+
+	D3D11_TEXTURE2D_DESC inputDesc{}, outputDesc{};
+	_textures[0]->GetDesc(&inputDesc);
+	_textures[1]->GetDesc(&outputDesc);
+	return inputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+		outputDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+}
+
+DXGI_FORMAT EffectDrawer::_GetHdrInputFormat(const EffectDesc& desc) const noexcept {
+	(void)desc;
+	if (!_hdrEnabled || !_hdrBoundary.prepared || !_hdrBoundary.SelectedRoute()) {
+		return EffectHelper::FORMAT_DESCS[(uint32_t)desc.textures[0].format].dxgiFormat;
+	}
+	const DXGI_FORMAT routeFormat = _hdrBoundary.SelectedRoute()->inputFormat;
+	return routeFormat == DXGI_FORMAT_UNKNOWN
+		? EffectHelper::FORMAT_DESCS[(uint32_t)desc.textures[0].format].dxgiFormat
+		: routeFormat;
+}
+
+DXGI_FORMAT EffectDrawer::_GetHdrOutputFormat(const EffectDesc& desc) const noexcept {
+	(void)desc;
+	if (!_hdrEnabled || !_hdrBoundary.prepared || !_hdrBoundary.SelectedRoute()) {
+		return EffectHelper::FORMAT_DESCS[(uint32_t)desc.textures[1].format].dxgiFormat;
+	}
+	const DXGI_FORMAT routeFormat = _hdrBoundary.SelectedRoute()->outputFormat;
+	return routeFormat == DXGI_FORMAT_UNKNOWN
+		? EffectHelper::FORMAT_DESCS[(uint32_t)desc.textures[1].format].dxgiFormat
+		: routeFormat;
+}
+
+HdrTransformParameters EffectDrawer::_GetHdrTransformParameters() const noexcept {
+	if (_hdrBoundary.inputFrame.metadata.IsValid()) {
+		HdrTransformParameters parameters = HdrColorTransform::ForFrame(
+			_hdrBoundary.inputFrame.metadata.color);
+		if (parameters.IsValid()) {
+			if (const HdrFormatRoute* route = _hdrBoundary.SelectedRoute(); route &&
+				route->alphaMode == HdrAlphaMode::ForceOpaque) {
+				parameters.preserveAlpha = false;
+			}
+			return parameters;
+		}
+	}
+	return {};
+}
+
+bool EffectDrawer::PrepareHdrInput() const noexcept {
+	if (!_hdrEnabled) {
+		return true;
+	}
+	if (!_hdrInputSource || !_textures[0]) {
+		return false;
+	}
+	D3D11_TEXTURE2D_DESC sourceDesc{}, inputDesc{};
+	_hdrInputSource->GetDesc(&sourceDesc);
+	_textures[0]->GetDesc(&inputDesc);
+	if (sourceDesc.Width != inputDesc.Width || sourceDesc.Height != inputDesc.Height) {
+		Logger::Get().Error(fmt::format(
+			"HDR effect input size mismatch: source={}x{} adapter={}x{}",
+			sourceDesc.Width, sourceDesc.Height, inputDesc.Width, inputDesc.Height));
+		return false;
+	}
+	if (_hdrBoundary.SelectedRoute()) {
+		const auto* route = _hdrBoundary.SelectedRoute();
+		D3D11_TEXTURE2D_DESC outputDesc{};
+		_textures[1]->GetDesc(&outputDesc);
+		if (inputDesc.Format != route->inputFormat || outputDesc.Format != route->outputFormat) {
+			Logger::Get().Error(fmt::format(
+				"HDR route/resource mismatch: route={} input={} output={}",
+				route->Id(), static_cast<uint32_t>(inputDesc.Format),
+				static_cast<uint32_t>(outputDesc.Format)));
+			return false;
+		}
+	}
+	if (_UsesDirectHdrPath()) {
+		_d3dDC->CopyResource(_textures[0].get(), _hdrInputSource);
+		return true;
+	}
+	const HdrFormatRoute* route = _hdrBoundary.SelectedRoute();
+	if (route && route->inputTransfer == HdrTransferFunction::PQ &&
+		inputDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM) {
+		return _hdrSurfaceAdapter.ConvertCanonicalToHdr10(
+			_hdrInputSource, _textures[0].get(), _GetHdrTransformParameters());
+	}
+	if (_hdrBoundary.plan.requiresBoundedMapping) {
+		return _hdrSurfaceAdapter.ConvertHdrToBounded(
+			_hdrInputSource, _textures[0].get(), _GetHdrTransformParameters(),
+			_hdrBoundary.plan.normalizationScale);
+	}
+
+	if (route && route->inputTransfer == HdrTransferFunction::PQ) {
+		return _hdrSurfaceAdapter.ConvertHdrToSdr(
+			_hdrInputSource, _textures[0].get(), _GetHdrTransformParameters(),
+			HdrTransferFunction::PQ);
+	}
+	const HdrTransferFunction transfer = route &&
+		route->inputTransfer != HdrTransferFunction::Unknown
+		? route->inputTransfer : HdrTransferFunction::SRGB;
+	return _hdrSurfaceAdapter.ConvertHdrToSdr(
+		_hdrInputSource,
+		_textures[0].get(),
+		_GetHdrTransformParameters(),
+		transfer);
+}
+
+bool EffectDrawer::CompleteHdrOutput() const noexcept {
+	if (!_hdrEnabled) {
+		return true;
+	}
+	if (!_textures[1] || !_hdrOutput) {
+		return false;
+	}
+	if (_UsesDirectHdrPath()) {
+		_d3dDC->CopyResource(_hdrOutput.get(), _textures[1].get());
+		return true;
+	}
+	const HdrFormatRoute* route = _hdrBoundary.SelectedRoute();
+	D3D11_TEXTURE2D_DESC outputDesc{};
+	_textures[1]->GetDesc(&outputDesc);
+	if (route && route->outputTransfer == HdrTransferFunction::PQ &&
+		outputDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM) {
+		return _hdrSurfaceAdapter.ConvertHdr10ToCanonical(
+			_textures[1].get(), _hdrOutput.get(), _GetHdrTransformParameters());
+	}
+	if (_hdrBoundary.plan.requiresBoundedMapping) {
+		return _hdrSurfaceAdapter.ConvertBoundedToHdr(
+			_textures[1].get(), _hdrOutput.get(), _GetHdrTransformParameters(),
+			_hdrBoundary.plan.normalizationScale);
+	}
+
+	if (route && route->outputTransfer == HdrTransferFunction::PQ) {
+		return _hdrSurfaceAdapter.ConvertSdrToHdr(
+			_textures[1].get(), _hdrOutput.get(), _GetHdrTransformParameters(),
+			HdrTransferFunction::PQ);
+	}
+	const HdrTransferFunction transfer = route &&
+		route->outputTransfer != HdrTransferFunction::Unknown
+		? route->outputTransfer : HdrTransferFunction::SRGB;
+	return _hdrSurfaceAdapter.ConvertSdrToHdr(
+		_textures[1].get(),
+		_hdrOutput.get(),
+		_GetHdrTransformParameters(),
+		transfer);
+}
+
+bool EffectDrawer::UpdateParameters(
+	const EffectDesc& desc,
+	const EffectOption& option,
+	DeviceResources& deviceResources
+) noexcept {
+	if ((desc.flags & EffectFlags::InlineParams) ||
+		_textures.size() < 2 || !_textures[0] || !_textures[1]) {
+		return false;
+	}
+
+	D3D11_TEXTURE2D_DESC inputDesc{};
+	D3D11_TEXTURE2D_DESC outputDesc{};
+	_textures[0]->GetDesc(&inputDesc);
+	_textures[1]->GetDesc(&outputDesc);
+	return _UpdateConstants(
+		desc,
+		option,
+		deviceResources,
+		SIZE{ static_cast<LONG>(inputDesc.Width), static_cast<LONG>(inputDesc.Height) },
+		SIZE{ static_cast<LONG>(outputDesc.Width), static_cast<LONG>(outputDesc.Height) }
+	);
 }
 
 SIZE EffectDrawer::_CalcOutputSize(

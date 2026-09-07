@@ -9,7 +9,8 @@ class NvidiaOpticalFlowProvider final : public IMotionVectorProvider {
 public:
 	struct Impl;
 
-	NvidiaOpticalFlowProvider();
+	explicit NvidiaOpticalFlowProvider(
+		NvidiaOpticalFlowQuality quality = NvidiaOpticalFlowQuality::Balanced);
 	NvidiaOpticalFlowProvider(const NvidiaOpticalFlowProvider&) = delete;
 	NvidiaOpticalFlowProvider& operator=(
 		const NvidiaOpticalFlowProvider&) = delete;
@@ -25,8 +26,10 @@ public:
 	) noexcept override;
 	void Reset(FrameGuidanceResetReason reason) noexcept override;
 	bool Resize(FrameGuidanceExtent sourceExtent) noexcept override;
+	OpticalFlowInitializationError InitializationError() const noexcept override;
 
 private:
+	NvidiaOpticalFlowQuality _quality;
 	std::unique_ptr<Impl> _impl;
 };
 

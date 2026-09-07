@@ -1,8 +1,11 @@
 #include "pch.h"
+#include "FrameTrace.h"
 #include "ScalingRuntime.h"
 #include "CommonSharedConstants.h"
 #include "Logger.h"
 #include "ScalingWindow.h"
+#include "Renderer.h"
+#include "EffectParameterValue.h"
 #include "Win32Helper.h"
 #include <dispatcherqueue.h>
 
@@ -32,7 +35,8 @@ ScalingRuntime::~ScalingRuntime() {
 				MSG msg;
 				while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
 					TranslateMessage(&msg);
-					DispatchMessage(&msg);
+					FrameTrace::Scope traceMessage(FrameTrace::Event::FrontendMessage, msg.message);
+			DispatchMessage(&msg);
 				}
 
 				if (MsgWaitForMultipleObjectsEx(1, &hScalingThread,
@@ -43,37 +47,73 @@ ScalingRuntime::~ScalingRuntime() {
 				}
 			}
 		}
-		
+
 		_scalingThread.join();
 	}
 }
 
 bool ScalingRuntime::Start(HWND hwndSrc, ScalingOptions&& options, bool force) {
 	assert(!options.screenshotsDir.empty() && options.showToast && options.showError && options.save);
-
-	_Dispatcher().TryEnqueue([this, hwndSrc, options(std::move(options)), force]() mutable {
+	const winrt::DispatcherQueue& dispatcher = _Dispatcher();
+	const uint64_t generation =
+		_commandGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+	ScalingWindow::SessionWindowedMode(options.IsWindowedMode());
+	_State(ScalingState::Starting);
+	if (!dispatcher.TryEnqueue([
+		this, hwndSrc, options(std::move(options)), force, generation
+	]() mutable {
+		if (_commandGeneration.load(std::memory_order_acquire) != generation) return;
 		ScalingWindow& scalingWindow = ScalingWindow::Get();
 		// 如果正在缩放且 force 为假则忽略
 		if (scalingWindow && !force) {
+			_State(ScalingState::Scaling);
 			return;
 		}
 
 		scalingWindow.Stop();
-
-		// 初始化时视为处于缩放状态
-		_State(ScalingState::Scaling);
+		if (_commandGeneration.load(std::memory_order_acquire) != generation) {
+			return;
+		}
 		scalingWindow.Start(hwndSrc, std::move(options));
-	});
+		if (_commandGeneration.load(std::memory_order_acquire) != generation) {
+			// A stop requested during synchronous initialization cancels this run.
+			scalingWindow.Stop();
+			return;
+		}
+		_State(scalingWindow ? ScalingState::Scaling : ScalingState::Idle);
+	})) {
+		if (_commandGeneration.load(std::memory_order_acquire) == generation) {
+			_State(ScalingState::Idle);
+		}
+		return false;
+	}
 
 	return true;
 }
 
 void ScalingRuntime::ToggleScaling(bool isWindowedMode) {
-	_Dispatcher().TryEnqueue([isWindowedMode]() {
+	const uint64_t generation = _commandGeneration.load(std::memory_order_acquire);
+	_Dispatcher().TryEnqueue([this, isWindowedMode, generation]() {
+		if (_commandGeneration.load(std::memory_order_acquire) != generation ||
+			State() != ScalingState::Scaling) return;
 		if (ScalingWindow& scalingWindow = ScalingWindow::Get()) {
 			scalingWindow.ToggleScaling(isWindowedMode);
+			_State(scalingWindow ? ScalingState::Scaling : ScalingState::Idle);
 		};
 	});
+}
+
+void ScalingRuntime::InvokeOverlayAction(OverlayAction action) {
+    if (State() != ScalingState::Scaling) return;
+    const uint32_t runId = RunId();
+    const uint64_t generation = _commandGeneration.load(std::memory_order_acquire);
+    _Dispatcher().TryEnqueue([this, action, runId, generation]() {
+        if (State() != ScalingState::Scaling || RunId() != runId ||
+            _commandGeneration.load(std::memory_order_acquire) != generation) return;
+        if (ScalingWindow& window = ScalingWindow::Get()) {
+            window.Renderer().InvokeOverlayAction(action);
+        }
+    });
 }
 
 void ScalingRuntime::SwitchToolbarState() {
@@ -85,8 +125,109 @@ void ScalingRuntime::SwitchToolbarState() {
 }
 
 void ScalingRuntime::Stop() {
-	_Dispatcher().TryEnqueue([]() {
+	if (State() == ScalingState::Idle) return;
+	const uint64_t generation =
+		_commandGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+	_State(ScalingState::Stopping);
+	if (!_Dispatcher().TryEnqueue([this, generation]() {
+		if (_commandGeneration.load(std::memory_order_acquire) != generation) return;
 		ScalingWindow::Get().Stop();
+		if (_commandGeneration.load(std::memory_order_acquire) == generation) {
+			_State(ScalingState::Idle);
+		}
+	})) {
+		if (_commandGeneration.load(std::memory_order_acquire) == generation) {
+			_State(ScalingState::Idle);
+		}
+	}
+}
+
+bool ScalingRuntime::StopForTaskSwitch() {
+	const ScalingState state = State();
+	if (state == ScalingState::Idle || state == ScalingState::Stopping ||
+		ScalingWindow::SessionWindowedMode()) return false;
+	Stop();
+	return true;
+}
+
+uint32_t ScalingRuntime::RunId() const noexcept {
+	return ScalingWindow::RunId();
+}
+
+void ScalingRuntime::UpdateFrameSyncSettings(FrameSyncSettings settings) {
+	if (State() == ScalingState::Idle || State() == ScalingState::Stopping) return;
+	const uint64_t generation = _commandGeneration.load(std::memory_order_acquire);
+	_Dispatcher().TryEnqueue([this, generation, settings]() {
+		if (_commandGeneration.load(std::memory_order_acquire) != generation) return;
+		auto& window = ScalingWindow::Get();
+		if (auto session = window.Options().parameterSession) {
+			session->DesiredFrameSync(settings);
+			if (window) window.RenderOverlay();
+		}
+	});
+}
+
+void ScalingRuntime::UpdateEffectParameterFromSettings(uint32_t modeIdx, std::wstring modeName,
+	uint32_t effectIdx, EffectOption effect, std::string parameter, float value) {
+	const uint64_t generation = _commandGeneration.load(std::memory_order_acquire);
+	_Dispatcher().TryEnqueue([this, generation, modeIdx, modeName = std::move(modeName),
+		effectIdx, effect = std::move(effect), parameter = std::move(parameter), value]() {
+		if (_commandGeneration.load(std::memory_order_acquire) != generation) return;
+		auto& window = ScalingWindow::Get();
+		const bool waiting = window.IsWaitingForParameterRestart();
+		if (State() != ScalingState::Scaling && !(State() == ScalingState::Starting && waiting)) return;
+		const auto& options = window.Options();
+		if ((!window && !waiting) || options.scalingModeIdx != modeIdx || options.scalingModeName != modeName ||
+			effectIdx >= options.effects.size()) return;
+		const auto& active = options.effects[effectIdx];
+		if (active.name != effect.name || active.scale != effect.scale ||
+			active.scalingType != effect.scalingType) return;
+		if (waiting) {
+			window.UpdateWaitingEffectParameter(effectIdx, parameter, value);
+			return;
+		}
+		auto& renderer = window.Renderer();
+		const auto& descriptions = renderer.ActiveEffectDescs();
+		if (effectIdx >= descriptions.size()) return;
+		const auto& parameters = descriptions[effectIdx]->params;
+		const auto it = std::ranges::find(parameters, parameter, &EffectParameterDesc::name);
+		if (it == parameters.end()) return;
+		const float normalized = NormalizeEffectParameterValue(*it, value);
+		options.parameterSession->Desired(effectIdx, parameter, normalized);
+		const auto index = static_cast<uint32_t>(it - parameters.begin());
+		const auto& infos = renderer.EffectParameterRuntimeInfos();
+		if (effectIdx < infos.size() && index < infos[effectIdx].size() &&
+			infos[effectIdx][index].applyMode == EffectParameterApplyMode::Live) {
+			if (!renderer.QueueEffectParameterUpdate(effectIdx, index, normalized, false) && options.reportErrorDetails) {
+				options.reportErrorDetails(window.SrcTracker().Handle(),
+					ScalingError::EffectParameterLiveFailed, active.name + " / " + parameter, 0);
+			}
+		}
+		window.RenderOverlay();
+	});
+}
+
+bool ScalingRuntime::RestartWithEffectParameters(
+	HWND hwndSource,
+	HWND hwndScaling,
+	uint32_t scalingRunId,
+	std::vector<EffectOption>&& effects,
+	FrameSyncSettings frameSync
+) {
+	const uint64_t generation = _commandGeneration.load(std::memory_order_acquire);
+	return _Dispatcher().TryEnqueue([
+		this, hwndSource, hwndScaling, scalingRunId, generation,
+		effects = std::move(effects), frameSync
+	]() mutable {
+		if (_commandGeneration.load(std::memory_order_acquire) != generation ||
+			State() != ScalingState::Scaling) return;
+		ScalingWindow& window = ScalingWindow::Get();
+		if (!window || scalingRunId != ScalingWindow::RunId() ||
+			window.Handle() != hwndScaling ||
+			window.SrcTracker().Handle() != hwndSource) {
+			return;
+		}
+		window.RestartWithEffectParameters(std::move(effects), frameSync);
 	});
 }
 
@@ -156,40 +297,129 @@ void ScalingRuntime::_ScalingThreadProc() noexcept {
 	ScalingWindow::Dispatcher(_dispatcher);
 
 	time_point<steady_clock> lastRenderTime;
+	std::optional<uint64_t> parameterRestartGeneration;
 
 	MSG msg;
+	// Input/control messages are removed before frame notifications. WndProc only
+	// records work; all rendering happens below, outside the window-procedure
+	// call stack, so a FIFO/presenter wait cannot trap later button-up messages.
+	constexpr uint32_t MAX_MESSAGES_PER_PASS = 32;
+	auto peekPriorityMessage = [&msg]() noexcept {
+		if (PeekMessage(&msg, NULL, WM_QUIT, WM_QUIT, PM_REMOVE) ||
+			PeekMessage(&msg, NULL, WM_CANCELMODE, WM_CANCELMODE, PM_REMOVE) ||
+			PeekMessage(&msg, NULL, WM_CAPTURECHANGED, WM_CAPTURECHANGED, PM_REMOVE) ||
+			PeekMessage(&msg, NULL, WM_MOUSEFIRST, WM_MOUSELAST, PM_REMOVE) ||
+			PeekMessage(&msg, NULL, WM_NCMOUSEMOVE, WM_NCXBUTTONDBLCLK, PM_REMOVE)) {
+			return true;
+		}
+		return PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) != FALSE;
+	};
 	while (true) {
-		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+		for (uint32_t i = 0; i < MAX_MESSAGES_PER_PASS; ++i) {
+			if (!peekPriorityMessage()) {
+				break;
+			}
 			if (msg.message == WM_QUIT) {
 				scalingWindow.Stop();
 				return;
-			} else if (msg.message == CommonSharedConstants::WM_FRONTEND_RENDER &&
-				msg.hwnd == scalingWindow.Handle()) {
-				// 缩放窗口收到 WM_FRONTEND_RENDER 将执行渲染
-				lastRenderTime = steady_clock::now();
 			}
-
+			FrameTrace::Scope traceMessage(FrameTrace::Event::FrontendMessage, msg.message);
+			DispatchMessage(&msg);
+			if (scalingWindow.HasUrgentOverlayInput()) {
+				break;
+			}
+		}
+		// A DLSS overlay is rendered with the next queued content frame. Mouse
+		// traffic must not prevent its already-published notification reaching
+		// that FIFO while the producer is waiting for a free slot.
+		for (uint32_t i = 0; i < MAX_MESSAGES_PER_PASS && PeekMessage(&msg, NULL,
+			CommonSharedConstants::WM_FRONTEND_RENDER_DLSSFG,
+			CommonSharedConstants::WM_FRONTEND_RENDER_DLSSFG, PM_REMOVE); ++i) {
+			if (msg.message == WM_QUIT) { scalingWindow.Stop(); return; }
+			FrameTrace::Scope traceMessage(FrameTrace::Event::FrontendMessage, msg.message);
+			DispatchMessage(&msg);
+		}
+		// Also expose regular content notifications before servicing urgent
+		// overlay input, so mouse traffic cannot hide a newer captured frame.
+		for (uint32_t i = 0; i < MAX_MESSAGES_PER_PASS && PeekMessage(&msg, NULL,
+			CommonSharedConstants::WM_FRONTEND_RENDER,
+			CommonSharedConstants::WM_FRONTEND_RENDER, PM_REMOVE); ++i) {
+			if (msg.message == WM_QUIT) { scalingWindow.Stop(); return; }
+			FrameTrace::Scope traceMessage(FrameTrace::Event::FrontendMessage, msg.message);
 			DispatchMessage(&msg);
 		}
 
+		// Parameter callbacks only queue changes. Tear down here after rendering
+		// and window callbacks have returned, and service messages during the pause.
+		const uint64_t generation = _commandGeneration.load(std::memory_order_acquire);
+		if (parameterRestartGeneration && *parameterRestartGeneration != generation) {
+			if (scalingWindow.IsWaitingForParameterRestart()) scalingWindow.Stop();
+			parameterRestartGeneration.reset();
+		}
+		if (State() == ScalingState::Scaling ||
+			(parameterRestartGeneration && scalingWindow.IsWaitingForParameterRestart())) {
+			const bool wasWaiting = scalingWindow.IsWaitingForParameterRestart();
+			scalingWindow.ProcessPendingParameterRestart();
+			if (_commandGeneration.load(std::memory_order_acquire) != generation) {
+				// A user command issued during teardown/startup supersedes this work.
+				if (wasWaiting || scalingWindow.IsWaitingForParameterRestart()) scalingWindow.Stop();
+				parameterRestartGeneration.reset();
+			} else if (scalingWindow.IsWaitingForParameterRestart()) {
+				parameterRestartGeneration = generation;
+				_State(ScalingState::Starting);
+			} else if (wasWaiting) {
+				parameterRestartGeneration.reset();
+				_State(scalingWindow ? ScalingState::Scaling : ScalingState::Idle);
+			}
+		}
+		if (scalingWindow.IsWaitingForParameterRestart()) {
+			MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			continue;
+		}
+
 		if (scalingWindow) {
-			_State(ScalingState::Scaling);
+			const ScalingState state = State();
+			if (state != ScalingState::Starting && state != ScalingState::Stopping) {
+				_State(ScalingState::Scaling);
+			}
 
 			const auto now = steady_clock::now();
-			// 限制检测光标移动的频率
-			const milliseconds timeout(scalingWindow.Options().Is3DGameMode() ? 8 : 2);
+			// Content/input messages wake immediately; periodic cursor checks need
+			// not run at 500 Hz on a lower-refresh display.
+			const nanoseconds timeout = scalingWindow.Options().Is3DGameMode() ?
+				nanoseconds(8ms) : scalingWindow.Renderer().FrontendPollInterval();
 			nanoseconds rest = timeout - (now - lastRenderTime);
-			if (rest.count() <= 0) {
-				lastRenderTime = now;
-				rest = timeout;
+
+			// One render attempt per pass. Prefer content, which includes the same
+			// input, over submitting an old background and then the new frame.
+			if (scalingWindow.HasPendingDLSSFGFrame()) {
+				scalingWindow.RenderNextDLSSFGFrame();
+				lastRenderTime = steady_clock::now();
+			} else if (scalingWindow.HasPendingFrontendRender() ||
+				scalingWindow.Renderer().HasPendingContent()) {
 				scalingWindow.Render();
+				lastRenderTime = steady_clock::now();
+			} else if (scalingWindow.HasUrgentOverlayInput()) {
+				scalingWindow.RenderOverlay();
+				lastRenderTime = steady_clock::now();
+			} else if (rest.count() <= 0) {
+				scalingWindow.Render();
+				lastRenderTime = steady_clock::now();
 			}
-			
+			// Rendering may have stopped the window. Do not dereference its
+			// Renderer or sleep on a deadline belonging to the old session.
+			if (!scalingWindow) continue;
+			rest = timeout - (steady_clock::now() - lastRenderTime);
+
 			// 值为 1000000
 			constexpr auto ratio = std::ratio_divide<std::milli, std::nano>().num;
 			// 向上取整
-			const DWORD restMs = DWORD((rest.count() + ratio - 1) / ratio);
-			MsgWaitForMultipleObjectsEx(0, nullptr, restMs, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			// Keep retries short without spinning. Any newly queued input wakes this
+			// wait immediately through QS_ALLINPUT.
+			const DWORD restMs = (scalingWindow.HasPendingDLSSFGFrame() ||
+				scalingWindow.Renderer().HasPendingContent()) ? 1 :
+				DWORD((std::max<int64_t>(rest.count(), 0) + ratio - 1) / ratio);
+			scalingWindow.Renderer().WaitForFrontendWork(std::chrono::milliseconds(restMs));
 		} else if (scalingWindow.IsSrcRepositioning()) {
 			std::optional<bool> repositioning =
 				IsSrcRepositioning(scalingWindow.SrcTracker().Handle());
@@ -209,7 +439,10 @@ void ScalingRuntime::_ScalingThreadProc() noexcept {
 				_State(ScalingState::Idle);
 			}
 		} else {
-			_State(ScalingState::Idle);
+			const ScalingState state = State();
+			if (state != ScalingState::Starting && state != ScalingState::Stopping) {
+				_State(ScalingState::Idle);
+			}
 			lastRenderTime = {};
 			WaitMessage();
 		}
@@ -221,7 +454,7 @@ const winrt::DispatcherQueue& ScalingRuntime::_Dispatcher() noexcept {
 		_dispatcherInitialized.wait(false, std::memory_order_acquire);
 		_dispatcherInitializedCache = true;
 	}
-	
+
 	return _dispatcher;
 }
 

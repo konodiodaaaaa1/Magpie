@@ -1,122 +1,77 @@
-<p align="center">
-  <img src="./src/Magpie/Icons/SVG/Magpie Icon Full Disabled.svg" width="150" height="150" alt="Magpie">
-</p>
+<p align="center"><img src="./src/Magpie/Icons/SVG/Magpie Icon Full Disabled.svg" width="150" height="150" alt="Magpie"></p>
 <h1 align="center">Magpie Experimental</h1>
-
-<div align="center">
-
-[![许可协议](https://img.shields.io/github/license/Blinue/Magpie)](./LICENSE)
-
-</div>
 
 🌍 [English](./README.md) | **简体中文**
 
-这是 [Blinue/Magpie](https://github.com/Blinue/Magpie) 的非官方实验分支，主要提供基于窗口捕获画面的 DLSS、DLSS Frame Generation、DLSSNR、XeSS、FSR 和 RTX Video 实验效果。它不代表 Magpie 官方，也不由上游项目提供支持。
+Magpie Experimental 是面向 Windows 的窗口画面处理工具，也是 [Blinue/Magpie](https://github.com/Blinue/Magpie) 的非官方实验分支。它在 Magpie 的窗口缩放与效果系统基础上，探索 DLSS、XeSS、FSR、RTX Video 等技术在游戏、视频和其他窗口内容中的应用。
+
+程序捕获目标窗口的画面，按用户配置的效果组处理，再以全屏或窗口形式显示。目标应用无需为这些效果单独集成接口。本项目不代表 Magpie 官方，实验分支的问题请在本仓库反馈。
+
+## 主要功能
+
+### 图像处理与帧生成
+
+| 功能 | 效果示例 | 用途 |
+| --- | --- | --- |
+| 空间缩放与锐化 | Lanczos、FSR 及其他 MagpieFX 效果 | 放大窗口内容，调整清晰度与细节表现 |
+| 实验性时序超分辨率 | DLSS SR、FSR 2/3/4、XeSS SR | 探索从捕获画面和估算运动信息进行图像重建 |
+| AI 画面调整 | DLSSNR | 同分辨率 SDR 画面处理，调整色调、结构、阴影、反射与辉光 |
+| 视频增强 | RTX Video | 视频超分辨率与降噪，改善低分辨率或压缩内容的观感 |
+| 帧生成 | DLSSFG、XeSSFG | 在真实帧之间生成中间画面，提高视觉流畅度 |
+
+实验效果的可用性取决于显卡、驱动、运行组件和具体效果组合。各版本包含的效果及硬件要求见 [Release 说明](https://github.com/SAOG0721/Magpie/releases)。
+
+### 效果组与参数调节
+
+一个**效果组**可以按顺序组合多个效果器，并保存各自的参数和缩放设置。可以使用内置效果组，也可以为不同应用创建自己的组合。
+
+工具栏中的参数面板支持边看画面边调节，修改自动保存。控件会标明参数是实时生效，还是需要重新启用效果组；双击滑条可恢复效果器自身的默认值。参数支持分组、下拉选项和中文翻译。
+
+### 对比、性能监测与帧同步
+
+工具栏提供原图／处理后对比、各效果器耗时与帧率监测、截屏和参数调节，并支持自定义快捷键。启用帧生成时，可以分别查看输出帧率和真实帧率，帮助判断效果与性能开销。
+
+Front Edge Sync 用于控制 Magpie 的帧提交节奏，启用 FG 时控制补帧前的真实帧输入。源程序仍需配合限帧，同步等待可能增加延迟；设置方法见 [帧同步使用说明](docs/FRAME_SYNC_GUIDE.md)。
 
 ## 下载与安装
 
-1. 从 [GitHub Releases](https://github.com/SAOG0721/Magpie/releases) 下载最新的 `Magpie-Experimental-x64.zip`。
-2. 完全退出正在运行的 Magpie。
-3. 将 ZIP 完整解压到一个新目录，不要直接在压缩包内运行，也不建议覆盖旧版本目录。
-4. 运行 `Magpie.exe`。
+1. 从 [GitHub Releases](https://github.com/SAOG0721/Magpie/releases) 选择版本，阅读该版本说明并下载主包 `Magpie-Experimental-x64.zip`。
+2. 完全退出正在运行的 Magpie，将主包完整解压到一个新目录。
+3. 运行其中的 `Magpie.exe`，选择效果组和目标窗口，使用主页所示快捷键启用效果。
 
-设置默认保存在 `%LOCALAPPDATA%\Magpie\config\v4\config.json`。升级程序不会自动替换已有缩放模式。
+升级前请将需要保留的设置和截图备份到程序目录之外，并按对应 Release 的说明处理旧安装和配置。可选运行组件、DLL 选项及辅助工具的用途和使用方法也以该版本说明为准。GitHub 自动生成的源码压缩包用于开发，不是可直接运行的程序包。
 
-## 默认缩放模式
+## 使用与兼容性
 
-全新配置包含以下模式，默认选择 Lanczos：
+- 发布主包面向 Windows x64，需要支持 DirectX 11 的显卡；具体 AI 效果可能有更高要求。
+- Magpie 从完整窗口画面进行处理，无法取得游戏引擎原生的完整运动矢量、深度、曝光和独立 UI 信息。估算光流可以辅助部分效果，但不能等同于游戏原生 DLSS／FSR／XeSS 集成。
+- 图像处理可能同时影响文字和 UI；时序效果也可能产生拖影或其他瑕疵。可通过“对比”判断效果是否适合当前内容。
+- 同一效果组使用一种帧生成效果，避免与其他补帧系统叠加。生成帧率不等于游戏的真实渲染帧率，也不代表输入响应速度同比提升。
 
-| 模式 | 主要用途 | 硬件 |
-| --- | --- | --- |
-| Lanczos | 通用空间缩放 | DirectX 11 GPU |
-| FSR | 通用空间放大与锐化 | DirectX 11 GPU |
-| DLSS SR | 实验性 DLSS 超分辨率 | NVIDIA RTX |
-| RTX Video VSR Ultra | 视频、视觉小说和压缩画面增强 | NVIDIA RTX |
-| DLSSFG | 实验性 x2/x3/x4 帧生成 | NVIDIA RTX |
-| XeSSFG | 通用显卡实验性 x2 帧生成 | 兼容 Intel、NVIDIA 或 AMD GPU |
-| DLSSNR | 同分辨率 SDR AI 滤镜 | 支持运行时的 NVIDIA RTX |
+## 问题反馈
 
-旧版本用户可以在“缩放模式”页面导入 Release 附带的 `ScalingModes-v0.5.7-experimental.json`。该文件只追加 `DLSSFG`、`XeSSFG` 和 `DLSSNR`，不会删除或替换已有模式。
+遇到问题时，先查看主页“最近一次问题”的处理建议和详细信息，或打开日志目录。向 [Issues](https://github.com/SAOG0721/Magpie/issues) 反馈时，请提供程序版本、显卡与驱动、效果组、输入／输出分辨率、复现步骤和相关日志。
 
-## 推荐配置
+通用使用问题也可参考 [Magpie 上游 FAQ](https://github.com/Blinue/Magpie/wiki/FAQ)；本分支特有的实验效果和兼容性问题请在本仓库讨论。
 
-### DLSS SR
+## 开发与文档
 
-- `Use Motion Vectors`：默认开启。
-- `Use Estimated Depth (Experimental)`：默认关闭，只有在具体应用中验证确实改善画面时再开启。
-- 旧的 `DLSS\DLSS_ZeroMV` 配置会自动迁移到 `DLSS\DLSS_SR`，原参数和缩放方式会保留。
+项目包含 Magpie 应用、MagpieFX 效果及实验性原生效果后端。源码构建默认关闭可选专有后端，相关 SDK 和运行组件需要另行准备；本机路径通过不入库的 `src/BuildOptions.props.user` 配置。
 
-Magpie 无法取得游戏引擎原生运动矢量、深度、曝光、相机矩阵或 UI 分离信息。这里使用的是从捕获颜色画面估算的数据，因此不能等同于游戏原生 DLSS 接入。
+- [第三方依赖、许可与构建边界](docs/THIRD_PARTY_AND_REDISTRIBUTION.md)
+- [实验功能的设计与开发记录](docs/experimental/README.md)
+- [构建和打包脚本](scripts/Build-Release.ps1)
+- [MagpieFX 效果格式](docs/MagpieFX.md)
 
-### DLSS Frame Generation
+## 贡献与致谢
 
-- `Frame Multiplier`：可选择 x2、x3 或 x4，实际能力取决于 GPU、驱动和显示链路。
-- `Use Motion Vectors`：默认开启。
-- `Use Estimated Depth (Experimental)`：默认关闭。
-- 不要同时启用 DLSS FG、XeSS FG、NVIDIA Smooth Motion 或其他帧生成方案。
+本项目建立在 [Blinue/Magpie](https://github.com/Blinue/Magpie) 及其贡献者的工作之上，也感谢提交代码、翻译、设计建议和测试反馈的参与者。
 
-x3/x4 需要足够高的显示器刷新率。生成目标高于显示器刷新率时，监视器无法显示所有帧，最终帧率不会简单等于输入帧率乘倍率。
+- [HexBen123](https://github.com/HexBen123)：早期深度估算性能优化与 TensorRT 集成指导，以及 [DLSSNR 参数本地化提案](https://github.com/SAOG0721/Magpie/pull/16)。
+- [Kristijan1001](https://github.com/Kristijan1001)：[缩放期间实时编辑效果参数的参考实现](https://github.com/SAOG0721/Magpie/pull/4)，为本项目参数面板的设计与实现提供了参考。
 
-### DLSSNR
+欢迎通过 Issues 和 Pull Requests 参与；代码贡献记录见 [Contributors](https://github.com/SAOG0721/Magpie/graphs/contributors)。
 
-DLSSNR 是同分辨率 SDR 后处理，不负责放大。它可能同时改变游戏画面、文字和 UI；HDR 暂不支持。
+## 许可
 
-| 参数 | 范围 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| NR Preset | 0–3 | 0 | Default、Preset #1、#2、#3 |
-| NR Style | 0–2 | 0 | Default、Natural、Cinematic |
-| NR Intensity | 0–2 | 1 | 整体处理强度 |
-| Local Tone Strength | 0–2 | 1 | 局部色调强度 |
-| Local Structure Strength | 0–2 | 1 | 局部结构强度 |
-| Skin Structure Strength | -1–2 | -1 | -1 使用默认行为 |
-| Automatic Mask | 0/1 | 0 | 自动遮罩，默认关闭 |
-| NR UI Correction | 0/1 | 0 | UI 修正，默认关闭 |
-| Frame Guidance | 0–3 | 0 | Available、Force Zero、Motion Only、Depth Only |
-| Depth Inference Interval | 1–8 | 4 | 估算深度的最小真实帧间隔 |
-
-通常保持 `Frame Guidance=0 Available` 和 `Depth Inference Interval=4` 即可。运动较快时可以测试更低的 Interval，但它不会改变 NR 模型本身，只影响估算深度的更新频率和 GPU 开销。
-
-### XeSS FG 与 RTX Video
-
-XeSSFG 默认使用跨厂商 x2 Zero-MV 路径，目前没有接入 DLSS 使用的估算 Motion/Depth。RTX Video VSR Ultra 开销较高，建议根据目标分辨率和 GPU 余量决定是否使用。
-
-## DLSSNR DLL
-
-主 Release Pack 携带社区修改的 `nvngx_dlssnr.dll` 310.8.0.0，目标是兼容 RTX 40 系和 RTX 50 系。它不是保持 NVIDIA 原始签名完整性的官方文件，Windows Authenticode 会报告文件哈希不匹配。
-
-同一 Release 还提供 `DLSSNR-DLL-Options-310.8.0.0.zip`：
-
-- `NVIDIA-Original`：NVIDIA 原版签名文件。
-- `Community-RTX40-RTX50`：Release Pack 默认使用的社区兼容文件。
-
-切换 DLL 时，请先完全退出 Magpie，再替换程序目录中的 `nvngx_dlssnr.dll`。第三方 DLL 不包含在源码仓库或 GitHub 自动生成的源码归档中。
-
-## NGX OTA 临时工具
-
-`NGX_OTA_Switch.bat` 用于处理部分系统中 `nvngx_update.exe` 进程异常累积的问题。它可以临时关闭系统级 NGX OTA、结束现有更新进程，或删除设置以恢复 NVIDIA 默认行为。
-
-该工具需要管理员权限，设置会影响系统中其他使用 NGX 的程序。禁用 OTA 可能阻止 NVIDIA 在线更新 NGX 组件，请在测试结束后按需恢复默认设置。
-
-## 排错
-
-- 日志位于程序目录的 `logs\magpie.log`。
-- DLSSNR 是否真正创建并执行，可搜索 `DLSSNR STATUS`；NVIDIA Indicator 不保证在所有环境显示。
-- 帧生成没有画面时，确认没有同时启用其他帧生成方案，并检查日志中的 `DLSSFG` 或 `XeSSFG` 错误。
-- 如果效果文件或 DLL 缺失，请重新完整解压 Release，不要只复制 `Magpie.exe`。
-- 报告问题时请附上 Magpie 版本、GPU、驱动版本、效果链、输入/输出分辨率和日志。
-
-## 贡献者
-
-- [HexBen123](https://github.com/HexBen123) — 深度估算性能优化与 TensorRT 集成指导。
-
-## 系统要求与许可
-
-- Windows 10 v1903+ 或 Windows 11
-- DirectX 功能级别 11
-- x64 系统
-
-Magpie 派生源码采用 [GPLv3](./LICENSE)。第三方 SDK、模型和运行库适用各自的许可证，详见 [第三方组件与再分发说明](./docs/THIRD_PARTY_AND_REDISTRIBUTION.md)。
-
-- [实验版发布页](https://github.com/SAOG0721/Magpie/releases)
-- [Magpie 上游项目](https://github.com/Blinue/Magpie)
-- [上游 FAQ](https://github.com/Blinue/Magpie/wiki/FAQ)
+Magpie 派生源码采用 [GPLv3](LICENSE)。第三方 SDK、模型和运行组件适用各自的许可证，详见 [第三方组件与再分发说明](docs/THIRD_PARTY_AND_REDISTRIBUTION.md)。

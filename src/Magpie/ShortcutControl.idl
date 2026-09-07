@@ -3,6 +3,11 @@ namespace Magpie {
 		Scale,
 		WindowedModeScale,
 		Toolbar,
+		Profiler,
+		EffectParameters,
+		Screenshot,
+		ToolbarPin,
+		Comparison,
 		COUNT_OR_NONE
 	};
 

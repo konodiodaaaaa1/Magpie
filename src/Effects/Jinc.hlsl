@@ -29,7 +29,7 @@ float windowSinc;
 //!DEFAULT 0.825
 //!MIN 0
 //!MAX 1
-//!STEP 0.01
+//!STEP 0.005
 float sinc;
 
 //!PARAMETER

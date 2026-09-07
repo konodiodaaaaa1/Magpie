@@ -300,56 +300,21 @@ void ScalingModeEffectItem::Remove() {
 	_effectIdx = std::numeric_limits<uint32_t>::max();
 }
 
-bool ScalingModeEffectItem::CanMove() const noexcept {
+bool ScalingModeEffectItem::CanDrag() const noexcept {
 	if (_IsRemoved()) {
 		return false;
 	}
 
 	const ScalingMode& mode = ScalingModesService::Get().GetScalingMode(_scalingModeIdx);
-	return mode.effects.size() > 1 && Win32Helper::IsProcessElevated();
+	return mode.effects.size() > 1;
 }
 
-bool ScalingModeEffectItem::CanMoveUp() const noexcept {
-	if (_IsRemoved()) {
-		return false;
-	}
-
-	return _effectIdx > 0;
-}
-
-bool ScalingModeEffectItem::CanMoveDown() const noexcept {
-	if (_IsRemoved()) {
-		return false;
-	}
-
-	const ScalingMode& mode = ScalingModesService::Get().GetScalingMode(_scalingModeIdx);
-	return _effectIdx + 1 < (uint32_t)mode.effects.size();
-}
-
-void ScalingModeEffectItem::MoveUp() noexcept {
+void ScalingModeEffectItem::RefreshDragState() {
 	if (_IsRemoved()) {
 		return;
 	}
 
-	Moved.Invoke(*this, true);
-}
-
-void ScalingModeEffectItem::MoveDown() noexcept {
-	if (_IsRemoved()) {
-		return;
-	}
-
-	Moved.Invoke(*this, false);
-}
-
-void ScalingModeEffectItem::RefreshMoveState() {
-	if (_IsRemoved()) {
-		return;
-	}
-
-	RaisePropertyChanged(L"CanMove");
-	RaisePropertyChanged(L"CanMoveUp");
-	RaisePropertyChanged(L"CanMoveDown");
+	RaisePropertyChanged(L"CanDrag");
 }
 
 EffectItem& ScalingModeEffectItem::_Data() noexcept {

@@ -17,7 +17,12 @@ struct ToastPage : ToastPageT<ToastPage>, wil::notify_property_changed_base<Toas
 		return _isLogoShown;
 	}
 
-	fire_and_forget ShowMessageOnWindow(std::wstring title, std::wstring message, HWND hwndTarget, bool showLogo);
+	fire_and_forget ShowMessageOnWindow(
+		std::wstring title,
+		std::wstring message,
+		HWND hwndTarget,
+		bool showLogo,
+		std::chrono::milliseconds displayDuration);
 
 	void Close() {
 		_oldTeachingTip = nullptr;

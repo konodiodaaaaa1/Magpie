@@ -15,6 +15,10 @@ void HomePage::TimerSlider_Loaded(IInspectable const& sender, RoutedEventArgs co
 	XamlHelper::UpdateThemeOfTooltips(sender.try_as<DependencyObject>(), ActualTheme());
 }
 
+void HomePage::NumberBox_Loaded(IInspectable const& sender, RoutedEventArgs const&) const {
+	ControlHelper::NumberBox_Loaded(sender);
+}
+
 void HomePage::ComboBox_DropDownOpened(IInspectable const& sender, IInspectable const&) const {
 	ControlHelper::ComboBox_DropDownOpened(sender);
 }

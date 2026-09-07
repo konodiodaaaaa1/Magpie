@@ -3,9 +3,15 @@
 
 namespace Magpie {
 
+struct EffectOption;
+struct FrameSyncSettings;
+enum class OverlayAction;
+
 enum class ScalingState {
 	Idle,
+	Starting,
 	Scaling,
+	Stopping,
 	Waiting
 };
 
@@ -19,8 +25,24 @@ public:
 	void ToggleScaling(bool isWindowedMode);
 
 	void SwitchToolbarState();
+	void InvokeOverlayAction(OverlayAction action);
 
 	void Stop();
+	// Main-thread system-key notification; cancels pending fullscreen restarts too.
+	bool StopForTaskSwitch();
+	void UpdateFrameSyncSettings(FrameSyncSettings settings);
+
+	uint32_t RunId() const noexcept;
+	void UpdateEffectParameterFromSettings(uint32_t modeIdx, std::wstring modeName,
+		uint32_t effectIdx, EffectOption effect, std::string parameter, float value);
+
+	bool RestartWithEffectParameters(
+		HWND hwndSource,
+		HWND hwndScaling,
+		uint32_t scalingRunId,
+		std::vector<EffectOption>&& effects,
+		FrameSyncSettings frameSync
+	);
 
 	ScalingState State() const noexcept {
 		return _state.load(std::memory_order_relaxed);
@@ -45,6 +67,7 @@ private:
 	bool _dispatcherInitializedCache = false;
 
 	std::atomic<ScalingState> _state = ScalingState::Idle;
+	std::atomic<uint64_t> _commandGeneration = 0;
 };
 
 }

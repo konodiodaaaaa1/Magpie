@@ -175,14 +175,16 @@ void ProfileService::RemoveProfile(uint32_t profileIdx) {
 	AppSettings::Get().SaveAsync();
 }
 
-bool ProfileService::MoveProfile(uint32_t profileIdx, bool isMoveUp) {
+bool ProfileService::MoveProfile(uint32_t fromIndex, uint32_t toIndex) {
 	std::vector<Profile>& profiles = AppSettings::Get().Profiles();
-	if (isMoveUp ? profileIdx == 0 : profileIdx + 1 >= (uint32_t)profiles.size()) {
+	if (fromIndex >= profiles.size() || toIndex >= profiles.size() || fromIndex == toIndex) {
 		return false;
 	}
 
-	std::swap(profiles[profileIdx], profiles[isMoveUp ? (size_t)profileIdx - 1 : (size_t)profileIdx + 1]);
-	ProfileMoved.Invoke(profileIdx, isMoveUp);
+	Profile movedProfile = std::move(profiles[fromIndex]);
+	profiles.erase(profiles.begin() + fromIndex);
+	profiles.insert(profiles.begin() + toIndex, std::move(movedProfile));
+	ProfileMoved.Invoke(fromIndex, toIndex);
 
 	AppSettings::Get().SaveAsync();
 	return true;

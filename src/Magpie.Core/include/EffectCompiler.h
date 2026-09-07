@@ -7,6 +7,12 @@ struct EffectCompilerFlags {
 	// 会影响编译出的字节码的标志放在低 16 位中，这样组织是为了便于缓存
 	static constexpr uint32_t InlineParams = 1;
 	static constexpr uint32_t NoFP16 = 1 << 1;
+	// Optional primary-surface format overrides. Values are stored in the
+	// compile flags so effect-cache entries remain distinct per typed contract.
+	static constexpr uint32_t InputFormatShift = 2;
+	static constexpr uint32_t OutputFormatShift = 7;
+	static constexpr uint32_t SurfaceFormatMask = 0x1Fu;
+	static constexpr uint32_t HdrCompatibility = 1u << 12;
 
 	// 只解析输出尺寸和参数，供用户界面使用
 	static constexpr uint32_t NoCompile = 1 << 16;

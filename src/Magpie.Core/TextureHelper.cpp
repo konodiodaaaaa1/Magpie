@@ -151,24 +151,40 @@ winrt::com_ptr<ID3D11Texture2D> TextureHelper::LoadTexture(const wchar_t* fileNa
 	return nullptr;
 }
 
+static void RecordTextureSaveError(TextureSaveError* error, HRESULT code, bool writing = false) noexcept {
+	if (!error) return;
+	error->code = code;
+	const auto win32Code = HRESULT_FACILITY(code) == FACILITY_WIN32 ? HRESULT_CODE(code) : 0;
+	error->fileWriteFailed = writing || code == STG_E_MEDIUMFULL ||
+		code == STG_E_ACCESSDENIED || code == STG_E_WRITEFAULT ||
+		win32Code == ERROR_ACCESS_DENIED || win32Code == ERROR_DISK_FULL ||
+		win32Code == ERROR_HANDLE_DISK_FULL || win32Code == ERROR_WRITE_PROTECT ||
+		win32Code == ERROR_SHARING_VIOLATION || win32Code == ERROR_LOCK_VIOLATION ||
+		win32Code == ERROR_FILE_NOT_FOUND || win32Code == ERROR_PATH_NOT_FOUND;
+}
+
 static bool SavePng(
 	const wchar_t* fileName,
 	uint32_t width,
 	uint32_t height,
 	std::span<uint8_t> pixelData,
-	uint32_t rowPitch
+	uint32_t rowPitch,
+	TextureSaveError* error
 ) {
 	// 初始化 WIC
-	winrt::com_ptr<IWICImagingFactory2> wicFactory =
-		winrt::try_create_instance<IWICImagingFactory2>(CLSID_WICImagingFactory);
-	if (!wicFactory) {
-		Logger::Get().Error("创建 WICImagingFactory2 失败");
+	winrt::com_ptr<IWICImagingFactory2> wicFactory;
+	HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(wicFactory.put()));
+	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr);
+		Logger::Get().ComError("Create WICImagingFactory2 failed", hr);
 		return false;
 	}
 
 	winrt::com_ptr<IWICBitmapEncoder> imgEncoder;
-	HRESULT hr = wicFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, imgEncoder.put());
+	hr = wicFactory->CreateEncoder(GUID_ContainerFormatPng, nullptr, imgEncoder.put());
 	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr, false);
 		Logger::Get().ComError("IWICImagingFactory::CreateEncoder 失败", hr);
 		return false;
 	}
@@ -177,18 +193,21 @@ static bool SavePng(
 		winrt::com_ptr<IWICStream> wicStream;
 		hr = wicFactory->CreateStream(wicStream.put());
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, false);
 			Logger::Get().ComError("IWICImagingFactory::CreateStream 失败", hr);
 			return false;
 		}
 
 		hr = wicStream->InitializeFromFilename(fileName, GENERIC_WRITE);
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, true);
 			Logger::Get().ComError("IWICStream::InitializeFromFilename 失败", hr);
 			return false;
 		}
 
 		hr = imgEncoder->Initialize(wicStream.get(), WICBitmapEncoderNoCache);
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, false);
 			Logger::Get().ComError("IWICBitmapEncoder::Initialize 失败", hr);
 			return false;
 		}
@@ -197,18 +216,21 @@ static bool SavePng(
 	winrt::com_ptr<IWICBitmapFrameEncode> frameEncoder;
 	hr = imgEncoder->CreateNewFrame(frameEncoder.put(), nullptr);
 	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr, false);
 		Logger::Get().ComError("IWICBitmapEncoder::CreateNewFrame 失败", hr);
 		return false;
 	}
 
 	hr = frameEncoder->Initialize(nullptr);
 	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr, false);
 		Logger::Get().ComError("IWICBitmapFrameEncode::Initialize 失败", hr);
 		return false;
 	}
 
 	hr = frameEncoder->SetSize(width, height);
 	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr, false);
 		Logger::Get().ComError("IWICBitmapFrameEncode::SetSize 失败", hr);
 		return false;
 	}
@@ -217,6 +239,7 @@ static bool SavePng(
 	WICPixelFormatGUID destFormat = srcFormat;
 	hr = frameEncoder->SetPixelFormat(&destFormat);
 	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr, false);
 		Logger::Get().ComError("IWICBitmapFrameEncode::SetPixelFormat 失败", hr);
 		return false;
 	}
@@ -230,6 +253,7 @@ static bool SavePng(
 			pixelData.data()
 		);
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, false);
 			Logger::Get().ComError("IWICBitmapFrameEncode::WritePixels 失败", hr);
 			return false;
 		}
@@ -246,6 +270,7 @@ static bool SavePng(
 			memBmp.put()
 		);
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, false);
 			Logger::Get().ComError("IWICImagingFactory::CreateBitmapFromMemory 失败", hr);
 			return false;
 		}
@@ -253,6 +278,7 @@ static bool SavePng(
 		winrt::com_ptr<IWICFormatConverter> formatConverter;
 		hr = wicFactory->CreateFormatConverter(formatConverter.put());
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, false);
 			Logger::Get().ComError("IWICImagingFactory::CreateFormatConverter 失败", hr);
 			return false;
 		}
@@ -266,12 +292,14 @@ static bool SavePng(
 			WICBitmapPaletteTypeMedianCut
 		);
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, false);
 			Logger::Get().ComError("IWICFormatConverter::Initialize 失败", hr);
 			return false;
 		}
 
 		hr = frameEncoder->WriteSource(formatConverter.get(), nullptr);
 		if (FAILED(hr)) {
+			RecordTextureSaveError(error, hr, false);
 			Logger::Get().ComError("IWICBitmapFrameEncode::WriteSource 失败", hr);
 			return false;
 		}
@@ -279,12 +307,14 @@ static bool SavePng(
 
 	hr = frameEncoder->Commit();
 	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr, false);
 		Logger::Get().ComError("IWICBitmapFrameEncode::Commit 失败", hr);
 		return false;
 	}
 
 	hr = imgEncoder->Commit();
 	if (FAILED(hr)) {
+		RecordTextureSaveError(error, hr, false);
 		Logger::Get().ComError("IWICBitmapEncoder::Commit 失败", hr);
 		return false;
 	}
@@ -298,15 +328,17 @@ bool TextureHelper::SaveTexture(
 	uint32_t height,
 	EffectIntermediateTextureFormat format,
 	std::span<uint8_t> pixelData,
-	uint32_t rowPitch
+	uint32_t rowPitch,
+	TextureSaveError* error
 ) noexcept {
+	if (error) *error = {};
 	if (std::wstring_view(fileName).ends_with(L".dds")) {
 		DXGI_FORMAT dxgiFormat = EffectHelper::FORMAT_DESCS[(uint32_t)format].dxgiFormat;
-		return DDSHelper::Save(fileName, width, height, dxgiFormat, pixelData, rowPitch);
+		return DDSHelper::Save(fileName, width, height, dxgiFormat, pixelData, rowPitch, error);
 	} else {
 		assert(std::wstring_view(fileName).ends_with(L".png"));
 		assert(format == EffectIntermediateTextureFormat::R8G8B8A8_UNORM);
-		return SavePng(fileName, width, height, pixelData, rowPitch);
+		return SavePng(fileName, width, height, pixelData, rowPitch, error);
 	}
 }
 

@@ -50,9 +50,7 @@ bool FrameGuidanceD3D12Interop::Update(
 ) noexcept {
 	if (!view.IsValidFor(frameId, extent) ||
 		view.motionDirection != FrameGuidanceMotionDirection::CurrentToPrevious ||
-		view.motionUnit != FrameGuidanceMotionUnit::SourcePixels ||
-		view.depthConvention != FrameGuidanceDepthConvention::RelativeInverse ||
-		!view.depthInverted) {
+		view.motionUnit != FrameGuidanceMotionUnit::SourcePixels) {
 		return false;
 	}
 	if (_motion11 == view.motion.texture && _depth11 == view.depth.texture &&

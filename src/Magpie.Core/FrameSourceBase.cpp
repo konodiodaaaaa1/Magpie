@@ -1,9 +1,12 @@
 #include "pch.h"
+#include "FrameTrace.h"
 #include "FrameSourceBase.h"
 #include "BackendDescriptorStore.h"
 #include "DeviceResources.h"
 #include "DirectXHelper.h"
 #include "Logger.h"
+#include "Win32Helper.h"
+#include "HdrDiagnostics.h"
 #include "ScalingOptions.h"
 #include "ScalingWindow.h"
 #include "shaders/DuplicateFrameCS.h"
@@ -46,6 +49,22 @@ bool FrameSourceBase::Initialize(DeviceResources& deviceResources, BackendDescri
 		return false;
 	}
 
+	_hdrEnabled = ScalingWindow::Get().Options().IsHdrCompatibilityEnabled();
+	if (_hdrEnabled &&
+		!_hdrProcessor.Initialize(deviceResources, descriptorStore)) {
+		Logger::Get().Error("初始化 HDR 捕获处理器失败");
+		return false;
+	}
+	if (_hdrEnabled) {
+		D3D11_TEXTURE2D_DESC sourceDesc{};
+		_output->GetDesc(&sourceDesc);
+		if (!_hdrProcessor.Prepare(
+			_output.get(), sourceDesc.Format, _GetSourceColorDescription())) {
+			Logger::Get().Error("准备 HDR 捕获输出失败");
+			return false;
+		}
+	}
+
 	assert(_output);
 	_outputSrv = descriptorStore.GetShaderResourceView(_output.get());
 	if (!_outputSrv) {
@@ -58,10 +77,63 @@ bool FrameSourceBase::Initialize(DeviceResources& deviceResources, BackendDescri
 
 FrameSourceState FrameSourceBase::Update() noexcept {
 	const FrameSourceState state = _Update();
+	if (state == FrameSourceState::NewFrame && _hdrEnabled) {
+		if (_hdrFrameSequence != _captureSequence) {
+			++_resourceGeneration;
+			_hdrFrameSequence = _captureSequence;
+		}
+		D3D11_TEXTURE2D_DESC sourceDesc{};
+		_output->GetDesc(&sourceDesc);
+		ColorDescription sourceColor = _GetSourceColorDescription();
+		if (!_hdrProcessor.Process(_output.get(), HdrFrameMetadata{
+				.frameId = _captureSequence,
+				.captureSequence = _captureSequence,
+				.resourceGeneration = _resourceGeneration,
+				.timestamp100ns = _captureTimestamp100ns,
+				.width = sourceDesc.Width,
+				.height = sourceDesc.Height,
+				.sourceFormat = sourceDesc.Format,
+				.color = sourceColor,
+				.stage = HdrFrameStage::RawCapture,
+				.valid = true
+		})) {
+			_hdrFrameReady = false;
+			Logger::Get().Error("HDR 捕获帧处理失败");
+			return FrameSourceState::Error;
+		} else {
+			_hdrFrameReady = true;
+			if (!_hdrDiagnosticsLogged) {
+				HdrDiagnostics diagnostics{};
+				diagnostics.hdrOptionEnabled = true;
+				diagnostics.captureMethod = Name();
+				diagnostics.sourceFormat = sourceDesc.Format;
+				diagnostics.sourceColorDescription = _hdrProcessor.GetFrameMetadata().color;
+				diagnostics.selectedAdapterProfile = HdrAdapterProfile::DirectFP16;
+				diagnostics.conversionPath = "capture->canonicalFP16";
+				if (!_hdrProcessor.LastAssumption().empty()) AppendHdrAssumption(diagnostics, _hdrProcessor.LastAssumption());
+				LogHdrDiagnostics(diagnostics, true);
+				_hdrDiagnosticsLogged = true;
+			}
+		}
+	}
+	if (_hdrEnabled && state == FrameSourceState::NewFrame && !_hdrFrameReady) {
+		return FrameSourceState::Error;
+	}
+	const bool newSequence = state == FrameSourceState::NewFrame &&
+		_duplicateCaptureSequence != _captureSequence;
+	if (newSequence) {
+		_duplicateCaptureSequence = _captureSequence;
+		_isCheckingForDuplicateFrame = true;
+		_framesLeft = INITIAL_CHECK_COUNT;
+		_nextSkipCount = INITIAL_SKIP_COUNT;
+		if (_prevFrame) {
+			_deviceResources->GetD3DDC()->CopyResource(_prevFrame.get(), _output.get());
+		}
+	}
 
 	const ScalingOptions& options = ScalingWindow::Get().Options();
 	const auto duplicateFrameDetectionMode = options.duplicateFrameDetectionMode;
-	if (state != FrameSourceState::NewFrame || (!_forceDuplicateFrameDetection &&
+	if (state != FrameSourceState::NewFrame || (newSequence && _prevFrame) || (!_forceDuplicateFrameDetection &&
 		(options.Is3DGameMode() ||
 			duplicateFrameDetectionMode == DuplicateFrameDetectionMode::Never))) {
 		return state;
@@ -151,6 +223,102 @@ FrameSourceState FrameSourceBase::Update() noexcept {
 
 		return FrameSourceState::NewFrame;
 	}
+}
+
+ColorDescription FrameSourceBase::_GetSourceColorDescription() const noexcept {
+	ColorDescription result{};
+	if (!_deviceResources) return result;
+
+	const HMONITOR monitor = MonitorFromWindow(
+		ScalingWindow::Get().SrcTracker().Handle(), MONITOR_DEFAULTTONEAREST);
+	if (!monitor) return result;
+
+	IDXGIAdapter4* adapter = _deviceResources->GetGraphicsAdapter();
+	if (!adapter) return result;
+
+	for (UINT index = 0; ; ++index) {
+		winrt::com_ptr<IDXGIOutput> output;
+		if (FAILED(adapter->EnumOutputs(index, output.put()))) break;
+
+		DXGI_OUTPUT_DESC outputDesc{};
+		if (FAILED(output->GetDesc(&outputDesc)) || outputDesc.Monitor != monitor) continue;
+
+		winrt::com_ptr<IDXGIOutput6> output6 = output.try_as<IDXGIOutput6>();
+		if (!output6) return result;
+
+		DXGI_OUTPUT_DESC1 desc1{};
+		if (FAILED(output6->GetDesc1(&desc1))) return result;
+
+		result.dxgiColorSpace = desc1.ColorSpace;
+		result.displayHdrEnabled =
+			desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 ||
+			desc1.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+		const bool measuredPeak = desc1.MaxLuminance > 0.0f;
+		result.displayPeakNits = measuredPeak ? desc1.MaxLuminance : 1000.0f;
+		result.metadata.maxMasteringLuminanceNits = desc1.MaxLuminance;
+		result.metadata.minMasteringLuminanceNits = desc1.MinLuminance;
+		result.metadata.maxFrameAverageLightLevelNits = desc1.MaxFullFrameLuminance;
+		// WGC scRGB stores scene-linear values with 1.0 == 80 nit. SDR content
+		// rendered on an HDR desktop is raised by the monitor's SDR white-level
+		// setting (for example 4.5x == 360 nit), so the source description must
+		// carry that measured white point for the paired SDR bridge.
+		const float measuredSdrWhite = Win32Helper::GetMonitorSdrWhiteNits(monitor);
+		result.referenceWhiteNits = 80.0f;
+		result.sdrWhiteNits = measuredSdrWhite > 0.0f ? measuredSdrWhite : 80.0f;
+		result.range = HdrColorRange::Full;
+		result.isInferred = !measuredPeak;
+
+		D3D11_TEXTURE2D_DESC capturedDesc{};
+		if (_output) {
+			_output->GetDesc(&capturedDesc);
+		}
+		if (capturedDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+			capturedDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) {
+			// GDI, DWM shared-surface, and Desktop Duplication expose the
+			// selected capture as an 8-bit display-referred surface. Monitor
+			// PQ metadata describes the display, not these stored code values.
+			result.dxgiColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+			result.primaries = HdrColorPrimaries::Rec709;
+			result.transfer = HdrTransferFunction::SRGB;
+			result.range = HdrColorRange::Full;
+			result.isSceneReferred = false;
+			result.displayHdrEnabled = false;
+			result.isInferred = false;
+			return result;
+		}
+
+		switch (desc1.ColorSpace) {
+		case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
+			result.primaries = HdrColorPrimaries::Rec2020;
+			result.transfer = HdrTransferFunction::PQ;
+			break;
+		case DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709:
+			result.primaries = HdrColorPrimaries::Rec709;
+			result.transfer = HdrTransferFunction::Linear;
+			result.range = HdrColorRange::SceneLinear;
+			result.isSceneReferred = true;
+			break;
+		case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709:
+		default:
+			result.primaries = HdrColorPrimaries::Rec709;
+			result.transfer = HdrTransferFunction::SRGB;
+			result.range = HdrColorRange::Full;
+			break;
+		}
+		return result;
+	}
+
+	return result;
+}
+
+bool FrameSourceBase::PrepareHdrOutputForResize() noexcept {
+	if (!_hdrEnabled || !_output) return true;
+	D3D11_TEXTURE2D_DESC sourceDesc{};
+	_output->GetDesc(&sourceDesc);
+	_hdrFrameReady = false;
+	++_resourceGeneration;
+	_hdrFrameSequence = 0;
+	return _hdrProcessor.Prepare(_output.get(), sourceDesc.Format, _GetSourceColorDescription());
 }
 
 std::pair<uint32_t, uint32_t> FrameSourceBase::GetStatisticsForDynamicDetection() const noexcept {
@@ -308,6 +476,7 @@ bool FrameSourceBase::_InitCheckingForDuplicateFrame() {
 }
 
 bool FrameSourceBase::_IsDuplicateFrame() {
+	FrameTrace::Scope traceDuplicate(FrameTrace::Event::DuplicateCheck);
 	// 检查是否和前一帧相同
 	ID3D11DeviceContext4* d3dDC = _deviceResources->GetD3DDC();
 
@@ -332,10 +501,26 @@ bool FrameSourceBase::_IsDuplicateFrame() {
 
 	uint32_t result = 1;
 	D3D11_MAPPED_SUBRESOURCE ms;
+	const auto readbackStart = std::chrono::steady_clock::now();
+	FrameTrace::Scope traceReadback(FrameTrace::Event::DuplicateReadback);
 	HRESULT hr = d3dDC->Map(_readBackBuffer.get(), 0, D3D11_MAP_READ, 0, &ms);
 	if (SUCCEEDED(hr)) {
 		result = *(uint32_t*)ms.pData;
 		d3dDC->Unmap(_readBackBuffer.get(), 0);
+	}
+	traceReadback.Data(hr, result == 0);
+	traceReadback.End();
+	traceDuplicate.Data(result == 0, hr);
+	const double readbackMs = std::chrono::duration<double, std::milli>(
+		std::chrono::steady_clock::now() - readbackStart).count();
+	_duplicateReadbackTotalMs += readbackMs;
+	_duplicateReadbackMaxMs = std::max(_duplicateReadbackMaxMs, readbackMs);
+	if (++_duplicateReadbackSamples == 120) {
+		Logger::Get().Info(fmt::format(
+			"Capture duplicate readback CPU wait: samples=120 avgMs={:.3f} maxMs={:.3f}",
+			_duplicateReadbackTotalMs / 120, _duplicateReadbackMaxMs));
+		_duplicateReadbackSamples = 0;
+		_duplicateReadbackTotalMs = _duplicateReadbackMaxMs = 0;
 	}
 	return result == 0;
 }

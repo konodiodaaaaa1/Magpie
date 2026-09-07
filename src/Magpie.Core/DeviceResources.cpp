@@ -29,7 +29,7 @@ bool DeviceResources::Initialize(bool isForeground) noexcept {
 	}
 
 	_isTearingSupported = supportTearing;
-	Logger::Get().Info(fmt::format("可变刷新率支持: {}", supportTearing ? "是" : "否"));
+	Logger::Get().Info(fmt::format("DXGI tearing capability: {}", supportTearing ? "是" : "否"));
 
 	if (!_ObtainAdapterAndDevice(ScalingWindow::Get().Options().graphicsCardId, isForeground)) {
 		Logger::Get().Error("找不到可用的图形适配器");

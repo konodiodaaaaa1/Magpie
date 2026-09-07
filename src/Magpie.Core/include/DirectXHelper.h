@@ -32,6 +32,18 @@ struct DirectXHelper {
 		UINT miscFlags = 0,
 		const D3D11_SUBRESOURCE_DATA* pInitialData = nullptr
 	) noexcept;
+
+	// Frame Guidance textures cross the D3D11/D3D12 boundary through an NT
+	// shared handle. Keep the resource flags and validation in one place so
+	// providers and consumer-size adapters cannot silently diverge.
+	static winrt::com_ptr<ID3D11Texture2D> CreateSharedTexture2D(
+		ID3D11Device* d3dDevice,
+		DXGI_FORMAT format,
+		UINT width,
+		UINT height,
+		UINT bindFlags,
+		std::string_view role
+	) noexcept;
 };
 
 }

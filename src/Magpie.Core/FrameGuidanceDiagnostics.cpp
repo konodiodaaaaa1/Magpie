@@ -15,10 +15,7 @@ RWTexture2D<float4> Output : register(u0);
 cbuffer Params : register(b0) {
     uint2 Extent;
     uint Kind;
-    uint Invert;
     float Gain;
-    uint RawDepth;
-    uint2 Padding;
 };
 
 float3 HsvToRgb(float3 c) {
@@ -38,21 +35,10 @@ void Visualize(uint3 tid : SV_DispatchThreadID) {
         float hue = frac(atan2(-motion.y, motion.x) / 6.28318530718 + 1.0);
         color = HsvToRgb(float3(hue, saturate(magnitude),
             saturate(0.18 + magnitude)));
-    } else if (Kind == 1) {
+    } else {
         float confidence = saturate(guide.x);
         color = lerp(float3(1.0, 0.0, 0.0), confidence.xxx,
             smoothstep(0.2, 0.65, confidence));
-    } else if (Kind == 2) {
-        float value = RawDepth != 0 ?
-            1.0 - exp(-max(guide.x, 0.0) * Gain) : saturate(guide.x * Gain);
-        if (Invert != 0) value = 1.0 - value;
-        color = value.xxx;
-    } else {
-        float value = saturate(guide.x * Gain);
-        color = float3(
-            saturate(value * 2.0),
-            saturate(1.0 - abs(value * 2.0 - 1.0)),
-            saturate(1.0 - value * 2.0));
     }
     Output[tid.xy] = float4(color, 1.0);
 }
@@ -62,26 +48,41 @@ void Visualize(uint3 tid : SV_DispatchThreadID) {
 
 FrameGuidanceRequirements
 FrameGuidanceDiagnostics::GetFrameGuidanceRequirements() const noexcept {
-	switch (_settings.kind) {
-	case FrameGuidanceDiagnosticKind::Motion:
-	case FrameGuidanceDiagnosticKind::Confidence:
-		return { .zero = true, .motion = true };
-	case FrameGuidanceDiagnosticKind::Depth:
-		return {
-			.zero = true,
-			.depth = true,
-			.depthInferenceInterval = 1
-		};
-	case FrameGuidanceDiagnosticKind::DepthResidual:
-		return {
-			.zero = true,
-			.motion = true,
-			.depth = true,
-			.depthInferenceInterval = 1
-		};
-	default:
-		return {};
+	FrameGuidanceRequirements result{ .zero = true };
+	result.Add(MotionVectorRequest::Nvidia(
+		NvidiaOpticalFlowQuality::Balanced));
+	return result;
+}
+
+EffectParameterApplyMode FrameGuidanceDiagnostics::GetParameterApplyMode(
+	std::string_view parameterName
+) const noexcept {
+	return parameterName == "gain"
+		? EffectParameterApplyMode::Live
+		: EffectParameterApplyMode::RestartRequired;
+}
+
+EffectParameterRestartReason FrameGuidanceDiagnostics::GetParameterRestartReason(
+	std::string_view /*parameterName*/
+) const noexcept {
+	return EffectParameterRestartReason::NativeBackend;
+}
+
+bool FrameGuidanceDiagnostics::ApplyLiveParameters(
+	const EffectOption& option,
+	std::span<const std::string> parameterNames
+) noexcept {
+	if (std::ranges::any_of(parameterNames, [](const std::string& name) {
+		return name != "gain";
+	})) {
+		return false;
 	}
+	const auto it = option.parameters.find("gain");
+	if (it == option.parameters.end() || !std::isfinite(it->second)) {
+		return false;
+	}
+	_settings.gain = std::clamp(it->second, 0.005f, 1.0f);
+	return true;
 }
 
 bool FrameGuidanceDiagnostics::Initialize(
@@ -102,7 +103,7 @@ bool FrameGuidanceDiagnostics::Initialize(
 		return false;
 	}
 	const D3D11_BUFFER_DESC desc{
-		.ByteWidth = 32,
+		.ByteWidth = 16,
 		.Usage = D3D11_USAGE_DYNAMIC,
 		.BindFlags = D3D11_BIND_CONSTANT_BUFFER,
 		.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE
@@ -134,14 +135,6 @@ bool FrameGuidanceDiagnostics::Draw(
 	case FrameGuidanceDiagnosticKind::Confidence:
 		texture = view.confidence.texture;
 		break;
-	case FrameGuidanceDiagnosticKind::Depth:
-		texture = _settings.showRawDepth && view.rawDepth.texture ?
-			view.rawDepth.texture : view.depth.texture;
-		break;
-	case FrameGuidanceDiagnosticKind::DepthResidual:
-		texture = view.depthResidual.texture ? view.depthResidual.texture :
-			draw.zeroFrameGuidance.depth.texture;
-		break;
 	}
 	if (!texture || !draw.output) return false;
 
@@ -153,17 +146,15 @@ bool FrameGuidanceDiagnostics::Draw(
 		FAILED(_device->CreateUnorderedAccessView(
 			draw.output, nullptr, uav.put()))) return false;
 	struct Params {
-		uint32_t width, height, kind, invert;
+		uint32_t width, height, kind;
 		float gain;
-		uint32_t rawDepth, padding0, padding1;
 	};
 	D3D11_MAPPED_SUBRESOURCE mapped{};
 	if (FAILED(_context->Map(
 		_params.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) return false;
 	*static_cast<Params*>(mapped.pData) = {
 		outputDesc.Width, outputDesc.Height, static_cast<uint32_t>(_settings.kind),
-		_settings.invert ? 1u : 0u, _settings.gain,
-		_settings.showRawDepth ? 1u : 0u, 0, 0
+		_settings.gain
 	};
 	_context->Unmap(_params.get(), 0);
 	ID3D11ShaderResourceView* srvs[]{ srv.get() };

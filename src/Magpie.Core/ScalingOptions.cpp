@@ -56,6 +56,7 @@ void ScalingOptions::Log() const noexcept {
 	IsCaptureTitleBar: {}
 	IsAdjustCursorSpeed: {}
 	IsDirectFlipDisabled: {}
+	IsHdrCompatibilityEnabled: {}
 	cropping: {},{},{},{}
 	graphicsCardId:
 		idx: {}
@@ -63,9 +64,13 @@ void ScalingOptions::Log() const noexcept {
 		deviceId: {}
 	minFrameRate: {}
 	maxFrameRate: {}
+	frontEdgeSync: {}
+	frontEdgeSyncFrameRate: {}
+	vrr: {}
 	cursorScaling: {}
 	captureMethod: {}
 	multiMonitorUsage: {}
+	preferredMonitorId: {}
 	cursorInterpolationMode: {}
 	duplicateFrameDetectionMode: {}
 	fullscreenInitialToolbarState: {}
@@ -90,15 +95,20 @@ void ScalingOptions::Log() const noexcept {
 		IsCaptureTitleBar(),
 		IsAdjustCursorSpeed(),
 		IsDirectFlipDisabled(),
+		IsHdrCompatibilityEnabled(),
 		cropping.Left, cropping.Top, cropping.Right, cropping.Bottom,
 		graphicsCardId.idx,
 		graphicsCardId.vendorId,
 		graphicsCardId.deviceId,
 		minFrameRate,
 		maxFrameRate.has_value() ? *maxFrameRate : 0.0f,
+		isFrontEdgeSyncEnabled,
+		frontEdgeSyncFrameRate,
+		isVRREnabled,
 		cursorScaling,
 		(int)captureMethod,
 		(int)multiMonitorUsage,
+		StrHelper::UTF16ToUTF8(preferredMonitorId),
 		(int)cursorInterpolationMode,
 		(int)duplicateFrameDetectionMode,
 		(int)fullscreenInitialToolbarState,

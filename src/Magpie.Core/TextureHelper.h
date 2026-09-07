@@ -3,6 +3,11 @@
 
 namespace Magpie {
 
+struct TextureSaveError {
+	bool fileWriteFailed = false;
+	HRESULT code = S_OK;
+};
+
 class TextureHelper {
 public:
 	// 支持 dds、bmp、jpg、png 和 tiff
@@ -15,7 +20,8 @@ public:
 		uint32_t height,
 		EffectIntermediateTextureFormat format,
 		std::span<uint8_t> pixelData,
-		uint32_t rowPitch
+		uint32_t rowPitch,
+		TextureSaveError* error = nullptr
 	) noexcept;
 };
 

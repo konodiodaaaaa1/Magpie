@@ -17,9 +17,16 @@ public:
 
 	void Uninitialize() noexcept;
 
-	void ShowMessageOnWindow(std::wstring_view title, std::wstring_view message, HWND hwndTarget) const noexcept;
+	void ShowMessageOnWindow(
+		std::wstring_view title,
+		std::wstring_view message,
+		HWND hwndTarget,
+		std::chrono::milliseconds displayDuration = std::chrono::seconds(2)) const noexcept;
 
-	void ShowMessageInApp(std::wstring_view title, std::wstring_view message) const noexcept;
+	void ShowMessageInApp(
+		std::wstring_view title,
+		std::wstring_view message,
+		std::chrono::milliseconds displayDuration = std::chrono::seconds(2)) const noexcept;
 
 private:
 	ToastService() = default;

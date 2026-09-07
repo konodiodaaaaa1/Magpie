@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "FrameTrace.h"
 #include "CursorManager.h"
 #include "Logger.h"
 #include "Renderer.h"
@@ -112,6 +113,7 @@ CursorManager::~CursorManager() noexcept {
 }
 
 void CursorManager::Update() noexcept {
+	FrameTrace::Scope traceCursor(FrameTrace::Event::CursorUpdate);
 	_UpdateCursorState();
 	_UpdateCursorPos();
 }
@@ -332,6 +334,8 @@ void CursorManager::_ReliableSetCursorPos(POINT pos) const noexcept {
 winrt::fire_and_forget CursorManager::_SrcHitTestAsync(POINT screenPos) noexcept {
 	const uint32_t runId = ScalingWindow::RunId();
 	const uint32_t id = _nextHitTestId++;
+	const auto traceRequest = FrameTrace::Tick();
+	FrameTrace::Mark(FrameTrace::Event::HitTestRequest, id);
 	const HWND hwndSrc = ScalingWindow::Get().SrcTracker().Handle();
 
 	co_await winrt::resume_background();
@@ -340,6 +344,10 @@ winrt::fire_and_forget CursorManager::_SrcHitTestAsync(POINT screenPos) noexcept
 
 	co_await ScalingWindow::Get().Dispatcher();
 
+	if (runId == ScalingWindow::RunId()) {
+		FrameTrace::Record(FrameTrace::Event::HitTestComplete, traceRequest, FrameTrace::Tick(),
+			FrameTrace::Frame(), id, area);
+	}
 	if (runId != ScalingWindow::RunId() || id <= _lastCompletedHitTestId) {
 		co_return;
 	}

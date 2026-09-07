@@ -107,4 +107,60 @@ winrt::com_ptr<ID3D11Texture2D> DirectXHelper::CreateTexture2D(
 	return result;
 }
 
+winrt::com_ptr<ID3D11Texture2D> DirectXHelper::CreateSharedTexture2D(
+	ID3D11Device* d3dDevice,
+	DXGI_FORMAT format,
+	UINT width,
+	UINT height,
+	UINT bindFlags,
+	std::string_view role
+) noexcept {
+	constexpr UINT MISC_FLAGS =
+		D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+	const D3D11_TEXTURE2D_DESC desc{
+		.Width = width,
+		.Height = height,
+		.MipLevels = 1,
+		.ArraySize = 1,
+		.Format = format,
+		.SampleDesc{ .Count = 1, .Quality = 0 },
+		.Usage = D3D11_USAGE_DEFAULT,
+		.BindFlags = bindFlags,
+		.MiscFlags = MISC_FLAGS
+	};
+	auto logFailure = [&](std::string_view operation, HRESULT hr) noexcept {
+		Logger::Get().ComError(fmt::format(
+			"{} shared Frame Guidance texture failed: role={} format={} size={}x{} "
+			"BindFlags={:#x} MiscFlags={:#x}",
+			operation, role, static_cast<uint32_t>(format), width, height,
+			bindFlags, MISC_FLAGS), hr);
+	};
+
+	if (!d3dDevice || !width || !height) {
+		logFailure("Validate", E_INVALIDARG);
+		return nullptr;
+	}
+	winrt::com_ptr<ID3D11Texture2D> texture;
+	HRESULT hr = d3dDevice->CreateTexture2D(&desc, nullptr, texture.put());
+	if (FAILED(hr)) {
+		logFailure("Create", hr);
+		return nullptr;
+	}
+
+	winrt::com_ptr<IDXGIResource1> resource;
+	hr = texture->QueryInterface(IID_PPV_ARGS(resource.put()));
+	if (FAILED(hr)) {
+		logFailure("Query IDXGIResource1 for", hr);
+		return nullptr;
+	}
+	HANDLE rawHandle = nullptr;
+	hr = resource->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &rawHandle);
+	if (FAILED(hr) || !rawHandle) {
+		logFailure("Create NT handle for", FAILED(hr) ? hr : E_HANDLE);
+		return nullptr;
+	}
+	wil::unique_handle validationHandle(rawHandle);
+	return texture;
+}
+
 }

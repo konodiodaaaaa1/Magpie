@@ -3,6 +3,7 @@
 #include "DeviceResources.h"
 #include "Logger.h"
 #include "DirectXHelper.h"
+#include "ScalingWindow.h"
 
 namespace Magpie {
 
@@ -125,6 +126,7 @@ FrameGuidanceMetadata MakeTargetZeroMetadata(
 
 struct FrameGuidanceService::AdapterCache {
 	struct Entry {
+		MotionVectorRequest request{};
 		FrameGuidanceExtent extent{};
 		std::array<winrt::com_ptr<ID3D11Texture2D>, 3> adaptedTextures;
 		std::array<winrt::com_ptr<ID3D11Texture2D>, 3> zeroTextures;
@@ -171,12 +173,16 @@ struct FrameGuidanceService::AdapterCache {
 		entries.clear();
 	}
 
-	Entry* GetOrCreate(FrameGuidanceExtent extent) noexcept {
+	Entry* GetOrCreate(
+		FrameGuidanceExtent extent,
+		MotionVectorRequest request
+	) noexcept {
 		for (const auto& entry : entries) {
-			if (entry->extent == extent) return entry.get();
+			if (entry->extent == extent && entry->request == request) return entry.get();
 		}
 		auto entry = std::make_unique<Entry>();
 		entry->extent = extent;
+		entry->request = request;
 		constexpr std::array<DXGI_FORMAT, 3> FORMATS{
 			DXGI_FORMAT_R16G16_FLOAT,
 			DXGI_FORMAT_R32_FLOAT,
@@ -184,15 +190,19 @@ struct FrameGuidanceService::AdapterCache {
 		};
 		constexpr UINT BIND_FLAGS =
 			D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		constexpr UINT MISC_FLAGS =
-			D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+		constexpr std::array<std::string_view, 3> ADAPTED_ROLES{
+			"Adapter/Motion", "Adapter/Depth", "Adapter/Confidence"
+		};
+		constexpr std::array<std::string_view, 3> ZERO_ROLES{
+			"Adapter/Zero/Motion", "Adapter/Zero/Depth", "Adapter/Zero/Confidence"
+		};
 		for (size_t i = 0; i < FORMATS.size(); ++i) {
-			entry->adaptedTextures[i] = DirectXHelper::CreateTexture2D(
+			entry->adaptedTextures[i] = DirectXHelper::CreateSharedTexture2D(
 				device, FORMATS[i], extent.width, extent.height, BIND_FLAGS,
-				D3D11_USAGE_DEFAULT, MISC_FLAGS);
-			entry->zeroTextures[i] = DirectXHelper::CreateTexture2D(
+				ADAPTED_ROLES[i]);
+			entry->zeroTextures[i] = DirectXHelper::CreateSharedTexture2D(
 				device, FORMATS[i], extent.width, extent.height, BIND_FLAGS,
-				D3D11_USAGE_DEFAULT, MISC_FLAGS);
+				ZERO_ROLES[i]);
 			if (!entry->adaptedTextures[i] || !entry->zeroTextures[i] ||
 				FAILED(device->CreateUnorderedAccessView(
 					entry->adaptedTextures[i].get(), nullptr,
@@ -207,8 +217,12 @@ struct FrameGuidanceService::AdapterCache {
 			}
 		}
 		static constexpr float ZERO[4]{};
-		for (const auto& uav : entry->zeroUavs) {
-			context->ClearUnorderedAccessViewFloat(uav.get(), ZERO);
+		static constexpr float ONE[4]{ 1.0f, 1.0f, 1.0f, 1.0f };
+		const float* depthClear = ScalingWindow::Get().Options().IsHdrCompatibilityEnabled()
+			? ONE : ZERO;
+		for (size_t i = 0; i < entry->zeroUavs.size(); ++i) {
+			context->ClearUnorderedAccessViewFloat(
+				entry->zeroUavs[i].get(), i == 1 ? depthClear : ZERO);
 		}
 		Entry* result = entry.get();
 		entries.push_back(std::move(entry));
@@ -223,12 +237,14 @@ struct FrameGuidanceService::AdapterCache {
 		const FrameGuidanceView& sourceZero,
 		FrameGuidanceFrameId frameId,
 		FrameGuidanceExtent sourceExtent,
-		FrameGuidanceExtent targetExtent
+		FrameGuidanceExtent targetExtent,
+		MotionVectorRequest request
 	) noexcept {
-		Entry* entry = GetOrCreate(targetExtent);
+		Entry* entry = GetOrCreate(targetExtent, request);
 		if (!entry) return {};
 		if (entry->hasFrame && entry->frameId == frameId) {
-			return { entry->produced, entry->zero, true, entry->fallbackActive };
+			return { entry->produced, entry->zero, true, entry->fallbackActive ||
+				(request.method != OpticalFlowMethod::None && entry->produced.motion.metadata.isZero) };
 		}
 
 		const bool sourceValid = source.IsValidFor(frameId, sourceExtent);
@@ -236,6 +252,12 @@ struct FrameGuidanceService::AdapterCache {
 		const bool allZero = sourceValid && source.depth.metadata.isZero &&
 			source.motion.metadata.isZero && source.confidence.metadata.isZero;
 		bool converted = sourceValid && sourceZeroValid;
+		if (converted && !allZero) {
+			for (const auto* resource : { &source.motion, &source.depth, &source.confidence }) {
+				const auto sync = resource->metadata.sync;
+				if (sync.fence && sync.value && FAILED(context->Wait(sync.fence, sync.value))) converted = false;
+			}
+		}
 		if (converted && !allZero) {
 			const std::array<ID3D11Texture2D*, 3> sourceTextures{
 				source.motion.texture, source.depth.texture, source.confidence.texture
@@ -299,7 +321,10 @@ struct FrameGuidanceService::AdapterCache {
 		const bool wasFallback = entry->fallbackActive;
 		const uint64_t readyValue = ++fenceValue;
 		if (FAILED(context->Signal(fence.get(), readyValue))) {
-			converted = false;
+			// Never publish a sync point that cannot be reached.
+			entry->fallbackActive = true;
+			entry->hasFrame = false;
+			return {};
 		}
 		entry->fallbackActive = !converted;
 		const bool fallbackTransition = wasFallback != entry->fallbackActive;
@@ -338,21 +363,24 @@ struct FrameGuidanceService::AdapterCache {
 				zeroMotionMetadata.requiresHistoryReset ||
 				zeroConfidenceMetadata.requiresHistoryReset
 		};
-		if (!converted || allZero) {
+		if (!converted) {
 			entry->produced = entry->zero;
 		} else {
 			const bool recovered = fallbackTransition;
+			// A provider's zero output still carries its own reset metadata.
+			// Reusing the zero textures must not discard failure/recovery edges.
+			const auto& textures = allZero ? entry->zeroTextures : entry->adaptedTextures;
 			entry->produced = {
 				.depth = {
-					entry->adaptedTextures[1].get(), DXGI_FORMAT_R32_FLOAT,
+					textures[1].get(), DXGI_FORMAT_R32_FLOAT,
 					AdaptMetadata(source.depth.metadata, targetExtent,
 						fence.get(), readyValue, recovered) },
 				.motion = {
-					entry->adaptedTextures[0].get(), DXGI_FORMAT_R16G16_FLOAT,
+					textures[0].get(), DXGI_FORMAT_R16G16_FLOAT,
 					AdaptMetadata(source.motion.metadata, targetExtent,
 						fence.get(), readyValue, recovered) },
 				.confidence = {
-					entry->adaptedTextures[2].get(), DXGI_FORMAT_R8_UNORM,
+					textures[2].get(), DXGI_FORMAT_R8_UNORM,
 					AdaptMetadata(source.confidence.metadata, targetExtent,
 						fence.get(), readyValue, recovered) },
 				.requiresHistoryReset = source.requiresHistoryReset || recovered
@@ -367,7 +395,8 @@ struct FrameGuidanceService::AdapterCache {
 				frameId, sourceExtent.width, sourceExtent.height,
 				targetExtent.width, targetExtent.height));
 		}
-		return { entry->produced, entry->zero, true, !converted };
+		return { entry->produced, entry->zero, true, !converted ||
+			(request.method != OpticalFlowMethod::None && entry->produced.motion.metadata.isZero) };
 	}
 
 	ID3D11Device5* device = nullptr;
@@ -410,23 +439,27 @@ FrameGuidanceService::FrameGuidanceService() noexcept :
 
 FrameGuidanceService::~FrameGuidanceService() = default;
 
-bool FrameGuidanceService::SetDepthProvider(
-	std::unique_ptr<IDepthProvider> provider
-) noexcept {
-	if (IsInitialized()) {
-		return false;
-	}
-	_depthProvider = std::move(provider);
-	return true;
+void FrameGuidanceService::_RollbackInitialization() noexcept {
+	_adapterCache.reset();
+	_providers.clear();
+	_selectedMotionRequest = {};
+	_zeroResources.Reset();
+	_resources = nullptr;
+	_sourceExtent = {};
+	_view = {};
+	_zeroView = {};
+	_cachedRequirements = {};
+	_cachedFrameId = 0;
+	_hasCachedFrame = false;
+	_hasLoggedRequirements = false;
 }
 
 bool FrameGuidanceService::SetMotionVectorProvider(
-	std::unique_ptr<IMotionVectorProvider> provider
+	MotionVectorRequest request, std::unique_ptr<IMotionVectorProvider> provider
 ) noexcept {
-	if (IsInitialized()) {
-		return false;
-	}
-	_motionProvider = std::move(provider);
+	if (IsInitialized() || !provider || request.method == OpticalFlowMethod::None) return false;
+	for (const auto& entry : _providers) if (entry.request == request) return false;
+	_providers.push_back({ request, std::move(provider) });
 	return true;
 }
 
@@ -435,57 +468,72 @@ bool FrameGuidanceService::Initialize(
 	ID3D11Texture2D* sourceFrame,
 	const FrameGuidanceRequirements& requirements
 ) noexcept {
+	_selectedMotionRequest = requirements.PreferredMotion();
+	_initializationFailedMethod = OpticalFlowMethod::None;
+	_initializationError = OpticalFlowInitializationError::None;
 	_resources = &resources;
 	_sourceExtent = GetTextureExtent(sourceFrame);
 	if (!_sourceExtent.IsValid() ||
 		!_zeroDepthProvider.Initialize(resources, _sourceExtent) ||
 		!_zeroMotionProvider.Initialize(resources, _sourceExtent)) {
-		_resources = nullptr;
 		Logger::Get().Error("Initialize Frame Guidance zero providers failed");
+		_RollbackInitialization();
 		return false;
 	}
-	_depthProviderReady = !_depthProvider ||
-		_depthProvider->Initialize(resources, _sourceExtent);
-	_motionProviderReady = !_motionProvider ||
-		_motionProvider->Initialize(resources, _sourceExtent);
-	if (!_depthProviderReady) {
-		Logger::Get().Warn(
-			"Frame Guidance depth provider initialization failed; using Zero Depth");
-		_zeroDepthProvider.Reset(FrameGuidanceResetReason::ProviderFailure);
-	}
-	if (!_motionProviderReady) {
-		Logger::Get().Warn(
-			"Frame Guidance motion provider initialization failed; using Zero Motion");
-		_zeroMotionProvider.Reset(FrameGuidanceResetReason::ProviderFailure);
+	bool initialized = true;
+	requirements.ForEachMotion([&](MotionVectorRequest request) {
+		if (!initialized) return;
+		auto it = std::ranges::find(_providers, request, &ProviderEntry::request);
+		if (it != _providers.end() && it->provider->Initialize(resources, _sourceExtent)) {
+			it->ready = true;
+			return;
+		}
+		initialized = false;
+		_initializationFailedMethod = request.method;
+		_initializationError = it != _providers.end() ? it->provider->InitializationError() :
+			OpticalFlowInitializationError::ProviderUnavailable;
+		Logger::Get().Error(fmt::format("Frame Guidance initialization failed: method={} quality={}",
+			uint32_t(request.method), request.quality));
+	});
+	if (!initialized) {
+		_RollbackInitialization();
+		return false;
 	}
 
+	// The frame-source output is only an allocation at this point; capture has
+	// not started yet, so its contents are undefined. Keep every provider in its
+	// Initialize reset state and let the first real capture frame seed history.
 	_hasCachedFrame = false;
-	return _Produce({
-		.color = sourceFrame,
-		.frameId = 0,
-		.sourceExtent = _sourceExtent,
-		.validRegion = FrameGuidanceRegion::Full(_sourceExtent)
-	}, requirements).IsValidFor(0, _sourceExtent);
+	_view = {};
+	_zeroView = {};
+	return true;
 }
 
 const FrameGuidanceView& FrameGuidanceService::BeginFrame(
 	FrameGuidanceFrameId frameId,
 	ID3D11Texture2D* sourceFrame,
-	const FrameGuidanceRequirements& requirements
+	const FrameGuidanceRequirements& requirements,
+	uint64_t captureSequence,
+	uint64_t resourceGeneration,
+	int64_t timestamp100ns,
+	const ColorDescription& colorDescription
 ) noexcept {
 	const FrameGuidanceExtent extent = GetTextureExtent(sourceFrame);
-	if (_hasCachedFrame && _cachedFrameId == frameId && extent == _sourceExtent &&
-		_cachedRequirements == requirements) {
+	if (_hasCachedFrame && _cachedFrameId == frameId && extent == _sourceExtent) {
 		return _view;
 	}
 	if (extent != _sourceExtent) {
-		if (!Resize(extent, frameId, requirements)) {
+		if (!Resize(extent, requirements)) {
 			return _view;
 		}
 	}
 	return _Produce({
 		.color = sourceFrame,
 		.frameId = frameId,
+		.captureSequence = captureSequence,
+		.resourceGeneration = resourceGeneration,
+		.timestamp100ns = timestamp100ns,
+		.colorDescription = colorDescription,
 		.sourceExtent = _sourceExtent,
 		.validRegion = FrameGuidanceRegion::Full(_sourceExtent)
 	}, requirements);
@@ -493,7 +541,6 @@ const FrameGuidanceView& FrameGuidanceService::BeginFrame(
 
 bool FrameGuidanceService::Resize(
 	FrameGuidanceExtent sourceExtent,
-	FrameGuidanceFrameId currentFrameId,
 	const FrameGuidanceRequirements& requirements
 ) noexcept {
 	if (!sourceExtent.IsValid() || !_resources) {
@@ -504,40 +551,43 @@ bool FrameGuidanceService::Resize(
 		Logger::Get().Error("Resize Frame Guidance zero providers failed");
 		return false;
 	}
-	if (requirements.depth && _depthProviderReady && _depthProvider &&
-		!_depthProvider->Resize(sourceExtent)) {
-		_depthProviderReady = false;
-		_zeroDepthProvider.Reset(FrameGuidanceResetReason::ProviderFailure);
-		Logger::Get().Warn(
-			"Resize Frame Guidance depth provider failed; using Zero Depth");
+	for (auto& entry : _providers) {
+		if (requirements.Contains(entry.request) && entry.ready && !entry.provider->Resize(sourceExtent)) {
+			entry.ready = false;
+			_zeroMotionProvider.Reset(FrameGuidanceResetReason::ProviderFailure);
+			Logger::Get().Warn(fmt::format("Frame Guidance resize failed: method={} quality={}; using Zero Motion",
+				uint32_t(entry.request.method), entry.request.quality));
+		}
+		entry.view = {};
 	}
-	if (requirements.motion && _motionProviderReady && _motionProvider &&
-		!_motionProvider->Resize(sourceExtent)) {
-		_motionProviderReady = false;
-		_zeroMotionProvider.Reset(FrameGuidanceResetReason::ProviderFailure);
-		Logger::Get().Warn(
-			"Resize Frame Guidance motion provider failed; using Zero Motion");
-	}
+
 	_sourceExtent = sourceExtent;
 	if (_adapterCache) _adapterCache->Reset();
 	_hasCachedFrame = false;
-	return _Produce({
-		.frameId = currentFrameId,
-		.sourceExtent = sourceExtent,
-		.validRegion = FrameGuidanceRegion::Full(sourceExtent)
-	}, requirements).IsValidFor(currentFrameId, sourceExtent);
+	_view = {};
+	_zeroView = {};
+	return true;
 }
 
 FrameGuidanceConsumerViews FrameGuidanceService::GetConsumerViews(
 	FrameGuidanceFrameId frameId,
-	FrameGuidanceExtent targetExtent
+	FrameGuidanceExtent targetExtent,
+	MotionVectorRequest request
 ) noexcept {
-	if (!targetExtent.IsValid() || !_view.IsValidFor(frameId, _sourceExtent) ||
+	// Every enabled consumer uses the session's selected provider. Disabled
+	// consumers still get Zero guidance, regardless of other effects' requests.
+	request = FrameGuidanceRequirements::ResolveConsumer(request, _selectedMotionRequest);
+	const auto it = std::ranges::find(_providers, request, &ProviderEntry::request);
+	const FrameGuidanceView& requestedView = it != _providers.end() ? it->view : _zeroView;
+	if (!targetExtent.IsValid() ||
+		!requestedView.IsValidFor(frameId, _sourceExtent) ||
 		!_zeroView.IsValidFor(frameId, _sourceExtent)) {
 		return {};
 	}
 	if (targetExtent == _sourceExtent) {
-		return { _view, _zeroView, false, false };
+		return { requestedView, _zeroView, false,
+			request.method != OpticalFlowMethod::None &&
+			requestedView.motion.metadata.isZero };
 	}
 	if (!_adapterCache) {
 		_adapterCache = std::make_unique<AdapterCache>();
@@ -549,7 +599,8 @@ FrameGuidanceConsumerViews FrameGuidanceService::GetConsumerViews(
 		}
 	}
 	return _adapterCache->Adapt(
-		_view, _zeroView, frameId, _sourceExtent, targetExtent);
+		requestedView, _zeroView, frameId, _sourceExtent, targetExtent,
+		request);
 }
 
 void FrameGuidanceService::ResetHistory(
@@ -559,19 +610,12 @@ void FrameGuidanceService::ResetHistory(
 		"Frame Guidance history reset: reason={}", ResetReasonName(reason)));
 	_zeroDepthProvider.Reset(reason);
 	_zeroMotionProvider.Reset(reason);
-	if (_depthProvider) {
-		_depthProvider->Reset(reason);
+	for (auto& entry : _providers) {
+		entry.provider->Reset(reason);
+		entry.view = {};
 	}
-	if (_motionProvider) {
-		_motionProvider->Reset(reason);
-	}
-	_view.requiresHistoryReset = true;
-	_view.depth.metadata.requiresHistoryReset = true;
-	_view.depth.metadata.resetReason = reason;
-	_view.motion.metadata.requiresHistoryReset = true;
-	_view.motion.metadata.resetReason = reason;
-	_view.confidence.metadata.requiresHistoryReset = true;
-	_view.confidence.metadata.resetReason = reason;
+	_view = {};
+	if (_adapterCache) _adapterCache->Reset();
 	_hasCachedFrame = false;
 }
 
@@ -580,18 +624,8 @@ const FrameGuidanceView& FrameGuidanceService::_Produce(
 	const FrameGuidanceRequirements& requirements
 ) noexcept {
 	if (!_hasLoggedRequirements || requirements != _lastLoggedRequirements) {
-		Logger::Get().Info(fmt::format(
-			"Frame Guidance requirements frameId={}: zero={} motion={} depth={} "
-			"depthInterval={} motionAction={} depthAction={}",
-			frame.frameId, requirements.zero,
-			requirements.motion, requirements.depth,
-			requirements.depthInferenceInterval,
-			requirements.motion ?
-				(_motionProviderReady && _motionProvider ? "run" : "zero-unavailable") :
-				"skip-unrequested",
-			requirements.depth ?
-				(_depthProviderReady && _depthProvider ? "run" : "zero-unavailable") :
-				"skip-unrequested"));
+		Logger::Get().Info(fmt::format("Frame Guidance selected shared provider: method={} quality={} instances={}",
+			uint32_t(_selectedMotionRequest.method), _selectedMotionRequest.quality, _providers.size()));
 		_lastLoggedRequirements = requirements;
 		_hasLoggedRequirements = true;
 	}
@@ -620,69 +654,69 @@ const FrameGuidanceView& FrameGuidanceService::_Produce(
 			zeroMotion.motion.metadata.requiresHistoryReset
 	};
 
-	MotionVectorProviderOutput motion;
-	bool motionValid = false;
-	const bool attemptedMotionProvider = requirements.motion &&
-		_motionProviderReady && _motionProvider;
-	if (attemptedMotionProvider) {
-		motionValid = _motionProvider->BeginFrame(frame, motion) &&
+	const auto produceMethod = [&](IMotionVectorProvider* provider, bool& ready,
+		bool& fallbackActive, uint32_t& consecutiveFailures, bool requested,
+		std::string_view methodName) noexcept {
+		if (!requested) return _zeroView;
+
+		MotionVectorProviderOutput motion;
+		const bool attempted = ready && provider;
+		const bool valid = attempted && provider->BeginFrame(frame, motion) &&
 			motion.motion.IsValid(
 				DXGI_FORMAT_R16G16_FLOAT, frame.frameId, frame.sourceExtent) &&
 			motion.confidence.IsValid(
 				DXGI_FORMAT_R8_UNORM, frame.frameId, frame.sourceExtent) &&
 			motion.motion.metadata.validRegion ==
-				motion.confidence.metadata.validRegion;
-	}
-	if (!motionValid) {
-		motion = zeroMotion;
-		motionValid = true;
-		if (attemptedMotionProvider) {
-			motion.motion.metadata.resetReason =
-				FrameGuidanceResetReason::ProviderFailure;
-			motion.confidence.metadata.resetReason =
-				FrameGuidanceResetReason::ProviderFailure;
-			motion.motion.metadata.requiresHistoryReset = true;
-			motion.confidence.metadata.requiresHistoryReset = true;
+				motion.confidence.metadata.validRegion &&
+			motion.motion.metadata.validRegion == zeroDepth.depth.metadata.validRegion;
+		const bool transition = fallbackActive != !valid;
+		fallbackActive = !valid;
+		if (!valid) {
+			motion = zeroMotion;
+			if (attempted && ++consecutiveFailures >= 3) {
+				ready = false;
+				Logger::Get().Warn(fmt::format(
+					"Frame Guidance {} stopped after {} consecutive failures; "
+					"using Zero Motion for this scaling session",
+					methodName, consecutiveFailures));
+			}
+		} else {
+			consecutiveFailures = 0;
 		}
-	}
-
-	FrameGuidanceFrame depthFrame = frame;
-	depthFrame.motionGuidance = &motion;
-	DepthProviderOutput depth;
-	bool depthValid = false;
-	const bool attemptedDepthProvider = requirements.depth &&
-		_depthProviderReady && _depthProvider;
-	if (attemptedDepthProvider) {
-		depthValid = _depthProvider->BeginFrame(depthFrame, depth) &&
-			depth.depth.IsValid(
-				DXGI_FORMAT_R32_FLOAT, frame.frameId, frame.sourceExtent);
-	}
-	if (!depthValid) {
-		depth = zeroDepth;
-		depthValid = true;
-		if (attemptedDepthProvider) {
-			depth.depth.metadata.resetReason =
-				FrameGuidanceResetReason::ProviderFailure;
-			depth.depth.metadata.requiresHistoryReset = true;
+		if (transition) {
+			for (auto* resource : { &motion.motion, &motion.confidence }) {
+				resource->metadata.resetReason = FrameGuidanceResetReason::ProviderFailure;
+				resource->metadata.requiresHistoryReset = true;
+			}
 		}
-	}
 
-	_view.depth = depth.depth;
-	_view.motion = motion.motion;
-	_view.confidence = motion.confidence;
-	_view.rawDepth = depth.rawDepth;
-	_view.depthResidual = depth.depthResidual;
-	_view.requiresHistoryReset =
-		_view.depth.metadata.requiresHistoryReset ||
-		_view.motion.metadata.requiresHistoryReset ||
-		_view.confidence.metadata.requiresHistoryReset;
-	if (!_view.IsValidFor(frame.frameId, frame.sourceExtent)) {
-		Logger::Get().Warn(fmt::format(
-			"Frame Guidance coherence failure at frameId={}; using whole Zero group",
-			frame.frameId));
-		_view = _zeroView;
-		_view.requiresHistoryReset = true;
+		FrameGuidanceView result{
+			.depth = zeroDepth.depth,
+			.motion = motion.motion,
+			.confidence = motion.confidence,
+			.requiresHistoryReset =
+				zeroDepth.depth.metadata.requiresHistoryReset ||
+				motion.motion.metadata.requiresHistoryReset ||
+				motion.confidence.metadata.requiresHistoryReset
+		};
+		if (!result.IsValidFor(frame.frameId, frame.sourceExtent)) {
+			Logger::Get().Warn(fmt::format(
+				"Frame Guidance {} coherence failure at frameId={}; using Zero",
+				methodName, frame.frameId));
+			result = _zeroView;
+			result.requiresHistoryReset = true;
+		}
+		return result;
+	};
+
+	for (auto& entry : _providers) {
+		entry.view = produceMethod(entry.provider.get(), entry.ready, entry.fallbackActive,
+			entry.consecutiveFailures,
+			requirements.Contains(entry.request),
+			entry.request.method == OpticalFlowMethod::Nvidia ? "NVOF" :
+			"AMD OF");
 	}
+	_view = _providers.empty() ? _zeroView : _providers.front().view;
 	_cachedFrameId = frame.frameId;
 	_cachedRequirements = requirements;
 	_hasCachedFrame = true;

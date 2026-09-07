@@ -11,6 +11,8 @@ struct HomePage : HomePageT<HomePage> {
 		return *_viewModel;
 	}
 
+	void NumberBox_Loaded(IInspectable const& sender, RoutedEventArgs const&) const;
+
 	void ComboBox_DropDownOpened(IInspectable const& sender, IInspectable const&) const;
 
 	void InfoBar_SizeChanged(IInspectable const& sender, SizeChangedEventArgs const&) const;

@@ -16,16 +16,13 @@ namespace Magpie {
         Int32 RenameTextBoxSelectionStart { get; };
         Boolean IsRenameButtonEnabled { get; };
 
-        Boolean CanMoveUp { get; };
-        Boolean CanMoveDown { get; };
-        void MoveUp();
-        void MoveDown();
+        Boolean CanDrag { get; };
+        void Duplicate();
 
         void Remove();
         IVector<IInspectable> LinkedProfiles { get; };
         Boolean IsInUse { get; };
 
         Boolean CanReorderEffects { get; };
-        Boolean IsShowMoveButtons { get; };
     }
 }

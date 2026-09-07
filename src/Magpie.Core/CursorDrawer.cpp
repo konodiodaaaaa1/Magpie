@@ -84,7 +84,9 @@ bool CursorDrawer::Initialize(DeviceResources& deviceResources) noexcept {
 	return true;
 }
 
-void CursorDrawer::Draw(ID3D11Texture2D* backBuffer, POINT drawOffset) noexcept {
+void CursorDrawer::Draw(ID3D11Texture2D* backBuffer, POINT drawOffset,
+	ID3D11Texture2D* sceneTexture) noexcept {
+	_isBackgroundDependent = false;
 	const ScalingWindow& scalingWindow = ScalingWindow::Get();
 
 	bool isCursorActive = false;
@@ -227,11 +229,19 @@ void CursorDrawer::Draw(ID3D11Texture2D* backBuffer, POINT drawOffset) noexcept 
 		d3dDC->PSSetSamplers(0, 1, &cursorSampler);
 
 		// 预乘 alpha
-		_SetPremultipliedAlphaBlend();
+		if (!_SetPremultipliedAlphaBlend()) {
+			return;
+		}
 	} else {
+		_isBackgroundDependent = true;
+		// These shaders resolve the final cursor pixel themselves; never inherit
+		// the color cursor or Overlay blend state.
+		d3dDC->OMSetBlendState(nullptr, nullptr, 0xffffffff);
 		if (_tempCursorTextureSize != cursorSize) {
 			_tempCursorTexture = nullptr;
 			_tempCursorTextureRtv = nullptr;
+			_tempSceneTexture = nullptr;
+			_tempSceneSrv = nullptr;
 
 			ID3D11Device* d3dDevice = _deviceResources->GetD3DDevice();
 
@@ -258,6 +268,20 @@ void CursorDrawer::Draw(ID3D11Texture2D* backBuffer, POINT drawOffset) noexcept 
 
 			_tempCursorTextureSize = cursorSize;
 		}
+		if (sceneTexture && !_tempSceneSrv) {
+			_tempSceneTexture = DirectXHelper::CreateTexture2D(
+				_deviceResources->GetD3DDevice(), DXGI_FORMAT_R8G8B8A8_UNORM,
+				cursorSize.cx, cursorSize.cy, D3D11_BIND_SHADER_RESOURCE);
+			if (!_tempSceneTexture) {
+				return;
+			}
+			HRESULT hr = _deviceResources->GetD3DDevice()->CreateShaderResourceView(
+				_tempSceneTexture.get(), nullptr, _tempSceneSrv.put());
+			if (FAILED(hr)) {
+				Logger::Get().ComError("Create cursor scene SRV failed", hr);
+				return;
+			}
+		}
 
 		{
 			D3D11_BOX srcBox{
@@ -276,6 +300,18 @@ void CursorDrawer::Draw(ID3D11Texture2D* backBuffer, POINT drawOffset) noexcept 
 
 			d3dDC->CopySubresourceRegion(_tempCursorTexture.get(),
 				0, destLeft, destTop, 0, backBuffer, 0, &srcBox);
+			if (sceneTexture) {
+				// Unlike the DComp atlas, sceneTexture starts at the destination's
+				// top-left. Preserve clipping and cursor-local offsets at all edges.
+				D3D11_BOX sceneBox{
+					UINT(std::max(cursorRect.left, viewportRect.left) - viewportRect.left),
+					UINT(std::max(cursorRect.top, viewportRect.top) - viewportRect.top), 0,
+					UINT(std::min(cursorRect.right, viewportRect.right) - viewportRect.left),
+					UINT(std::min(cursorRect.bottom, viewportRect.bottom) - viewportRect.top), 1
+				};
+				d3dDC->CopySubresourceRegion(_tempSceneTexture.get(),
+					0, destLeft, destTop, 0, sceneTexture, 0, &sceneBox);
+			}
 		}
 
 		if (cursorInfo->type == _CursorType::MaskedColor) {
@@ -303,8 +339,9 @@ void CursorDrawer::Draw(ID3D11Texture2D* backBuffer, POINT drawOffset) noexcept 
 		d3dDC->PSSetConstantBuffers(0, 0, nullptr);
 
 		{
-			ID3D11ShaderResourceView* srvs[2]{ _tempCursorTextureRtv.get(), cursorInfo->textureSrv.get() };
-			d3dDC->PSSetShaderResources(0, 2, srvs);
+			ID3D11ShaderResourceView* srvs[3]{ _tempCursorTextureRtv.get(),
+				cursorInfo->textureSrv.get(), sceneTexture ? _tempSceneSrv.get() : nullptr };
+			d3dDC->PSSetShaderResources(0, 3, srvs);
 		}
 		
 		{
@@ -443,7 +480,6 @@ const CursorDrawer::_CursorInfo* CursorDrawer::_ResolveCursor(HCURSOR hCursor) n
 				pixels[i] = (uint8_t)std::lround(pixels[size_t(i + 2)] * alpha);
 				pixels[size_t(i + 1)] = (uint8_t)std::lround(pixels[size_t(i + 1)] * alpha);
 				pixels[size_t(i + 2)] = b;
-				pixels[size_t(i + 3)] = 255 - pixels[size_t(i + 3)];
 			}
 		} else {
 			// 彩色掩码光标
@@ -474,12 +510,12 @@ const CursorDrawer::_CursorInfo* CursorDrawer::_ResolveCursor(HCURSOR hCursor) n
 				for (uint32_t i = 0; i < bi.bmiHeader.biSizeImage; i += 4) {
 					if (maskPixels[i] == 0) {
 						// 保留光标颜色
-						// Alpha 通道已经是 0，无需设置
+						pixels[size_t(i + 3)] = 255;
 						std::swap(pixels[i], pixels[size_t(i + 2)]);
 					} else {
 						// 透明像素
 						std::memset(&pixels[i], 0, 3);
-						pixels[size_t(i + 3)] = 255;
+						pixels[size_t(i + 3)] = 0;
 					}
 				}
 			} else {
@@ -518,15 +554,16 @@ const CursorDrawer::_CursorInfo* CursorDrawer::_ResolveCursor(HCURSOR hCursor) n
 					if (pixels[size_t(i + halfSize)] == 0) {
 						// 黑色
 						std::memset(&pixels[i], 0, 4);
+						pixels[size_t(i + 3)] = 255;
 					} else {
 						// 白色
 						std::memset(&pixels[i], 255, 3);
-						pixels[size_t(i + 3)] = 0;
+						pixels[size_t(i + 3)] = 255;
 					}
 				} else {
 					// 透明
 					std::memset(&pixels[i], 0, 3);
-					pixels[size_t(i + 3)] = 255;
+					pixels[size_t(i + 3)] = 0;
 				}
 			}
 		} else {
@@ -580,13 +617,16 @@ const CursorDrawer::_CursorInfo* CursorDrawer::_ResolveCursor(HCURSOR hCursor) n
 
 bool CursorDrawer::_SetPremultipliedAlphaBlend() noexcept {
 	if (!premultipliedAlphaBlendBlendState) {
-		// FinalColor = ScreenColor * CursorColor.a + CursorColor
+		// Cursor textures use standard premultiplied coverage alpha. Preserve the
+		// same RGB on opaque targets and compose valid alpha for XeSSFG's
+		// transparent DirectComposition overlay (transparent cursor padding must
+		// not become an opaque black rectangle).
 		D3D11_BLEND_DESC desc{};
 		desc.RenderTarget[0].BlendEnable = TRUE;
 		desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
 		desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-		desc.RenderTarget[0].DestBlend = D3D11_BLEND_SRC_ALPHA;
-		desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+		desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
 		desc.RenderTarget[0].BlendOp = desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
 		desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 

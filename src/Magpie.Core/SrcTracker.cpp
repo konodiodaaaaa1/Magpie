@@ -30,7 +30,7 @@ ScalingError SrcTracker::Set(HWND hWnd, const ScalingOptions& options, bool& isI
 
 	if (!IsWindow(_hWnd)) {
 		Logger::Get().Error("源窗口句柄非法");
-		return ScalingError::InvalidSourceWindow;
+		return ScalingError::SourceWindowClosed;
 	}
 
 	// 不可见和最小化的窗口将等待源窗口状态改变，这里提前返回。注意 showCmd 不能准确
@@ -50,7 +50,7 @@ ScalingError SrcTracker::Set(HWND hWnd, const ScalingOptions& options, bool& isI
 
 	if (Win32Helper::GetWindowClassName(hWnd) == L"Ghost") {
 		Logger::Get().Error("不支持缩放幽灵窗口");
-		return ScalingError::InvalidSourceWindow;
+		return ScalingError::SourceWindowUnresponsive;
 	}
 
 	// 检查 integrity level
@@ -68,13 +68,13 @@ ScalingError SrcTracker::Set(HWND hWnd, const ScalingOptions& options, bool& isI
 
 	if (GetWindowLongPtr(hWnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT) {
 		Logger::Get().Error("不支持缩放透明的窗口");
-		return ScalingError::InvalidSourceWindow;
+		return ScalingError::SourceWindowUnsupported;
 	}
 
 	const HMONITOR hMon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONULL);
 	if (!hMon) {
 		Logger::Get().Error("源窗口不在任何屏幕上");
-		return ScalingError::InvalidSourceWindow;
+		return ScalingError::SourceWindowOffscreen;
 	}
 
 	_isFocused = GetForegroundWindow() == hWnd;
@@ -82,20 +82,20 @@ ScalingError SrcTracker::Set(HWND hWnd, const ScalingOptions& options, bool& isI
 
 	if (!GetWindowRect(hWnd, &_windowRect)) {
 		Logger::Get().Win32Error("GetWindowRect 失败");
-		return ScalingError::ScalingFailedGeneral;
+		return ScalingError::SourceWindowGeometryFailed;
 	}
 
 	HRESULT hr = DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS,
 		&_windowFrameRect, sizeof(_windowFrameRect));
 	if (FAILED(hr)) {
 		Logger::Get().ComError("DwmGetWindowAttribute 失败", hr);
-		return ScalingError::ScalingFailedGeneral;
+		return ScalingError::SourceWindowGeometryFailed;
 	}
 
 	RECT clientRect;
 	if (!Win32Helper::GetClientScreenRect(hWnd, clientRect)) {
 		Logger::Get().Win32Error("GetClientScreenRect 失败");
-		return ScalingError::ScalingFailedGeneral;
+		return ScalingError::SourceWindowGeometryFailed;
 	}
 
 	// 计算窗口样式
@@ -464,7 +464,7 @@ ScalingError SrcTracker::_CalcSrcRect(
 				RECT clientRect;
 				if (!Win32Helper::GetClientScreenRect(_hWnd, clientRect)) {
 					Logger::Get().Error("GetClientScreenRect 失败");
-					return ScalingError::ScalingFailedGeneral;
+					return ScalingError::SourceWindowGeometryFailed;
 				}
 
 				// 如果有滚动条需特殊处理
@@ -515,7 +515,7 @@ ScalingError SrcTracker::_CalcSrcRect(
 				RECT clientRect;
 				if (!Win32Helper::GetClientScreenRect(_hWnd, clientRect)) {
 					Logger::Get().Error("GetClientScreenRect 失败");
-					return ScalingError::ScalingFailedGeneral;
+					return ScalingError::SourceWindowGeometryFailed;
 				}
 
 				_srcRect.top = std::max(_srcRect.top, clientRect.top);
@@ -529,7 +529,7 @@ ScalingError SrcTracker::_CalcSrcRect(
 		MONITORINFO mi{ .cbSize = sizeof(mi) };
 		if (!GetMonitorInfo(hMon, &mi)) {
 			Logger::Get().Win32Error("GetMonitorInfo 失败");
-			return ScalingError::ScalingFailedGeneral;
+			return ScalingError::SourceWindowGeometryFailed;
 		}
 
 		Win32Helper::IntersectRect(_srcRect, _srcRect, mi.rcMonitor);
@@ -539,7 +539,7 @@ ScalingError SrcTracker::_CalcSrcRect(
 
 	if (_srcRect.right - _srcRect.left < MIN_SRC_SIZE || _srcRect.bottom - _srcRect.top < MIN_SRC_SIZE) {
 		Logger::Get().Error("源窗口太小");
-		return ScalingError::InvalidSourceWindow;
+		return ScalingError::SourceWindowTooSmall;
 	}
 
 	_srcRect = {

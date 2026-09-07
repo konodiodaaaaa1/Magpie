@@ -34,6 +34,18 @@
 					</local:WrapPanel>
 				</local:SimpleStackPanel>
 			</muxc:InfoBar>
+			<muxc:InfoBar x:Name="RecentIssueCard"
+			              x:Uid="Home_RecentIssue"
+			              x:Load="{x:Bind ViewModel.ShowRecentIssue, Mode=OneWay}"
+			              IsOpen="{x:Bind ViewModel.ShowRecentIssue, Mode=TwoWay}"
+			              IsClosable="True"
+			              Message="{x:Bind ViewModel.RecentIssueSummary, Mode=OneWay}"
+			              Severity="Warning"
+			              SizeChanged="InfoBar_SizeChanged">
+				<Button x:Uid="Home_RecentIssue_Details"
+				        Margin="0,0,0,12"
+				        Click="{x:Bind ViewModel.ShowRecentIssueDetails}" />
+			</muxc:InfoBar>
 			<local:SettingsGroup x:Uid="Home_Activation">
 				<local:SettingsCard x:Uid="Home_Activation_FullscreenScaling"
 				                    IsWrapEnabled="True">
@@ -126,18 +138,80 @@
 					</local:SettingsExpander.Items>
 				</local:SettingsExpander>
 			</local:SettingsGroup>
-			<local:SettingsGroup x:Uid="Home_Toolbar">
-				<local:SettingsCard x:Uid="Home_Toolbar_StateToggle"
-				                    IsWrapEnabled="True">
-					<local:SettingsCard.HeaderIcon>
-						<FontIcon Glyph="&#xF69E;" />
-					</local:SettingsCard.HeaderIcon>
-					<local:ShortcutControl x:Uid="Home_Toolbar_StateToggle_ShortcutControl">
-						<local:ShortcutControl.Action>
-							<local:ShortcutAction>Toolbar</local:ShortcutAction>
-						</local:ShortcutControl.Action>
-					</local:ShortcutControl>
+			<local:SettingsGroup x:Uid="Home_FrameSync">
+				<local:SettingsExpander x:Uid="Home_FrameSync_FrontEdgeSync" IsWrapEnabled="True">
+					<local:SettingsExpander.HeaderIcon><FontIcon Glyph="&#xE787;" /></local:SettingsExpander.HeaderIcon>
+					<local:SettingsExpander.Content>
+						<ToggleSwitch x:Uid="ToggleSwitch" IsOn="{x:Bind ViewModel.IsFrontEdgeSyncEnabled, Mode=TwoWay}" />
+					</local:SettingsExpander.Content>
+					<local:SettingsExpander.Items>
+						<local:SettingsCard x:Uid="Home_FrameSync_Target" IsWrapEnabled="True">
+							<muxc:NumberBox x:Uid="Home_FrameSync_Target_Input" Width="160"
+							                IsEnabled="{x:Bind ViewModel.IsFrontEdgeSyncEnabled, Mode=OneWay}"
+							                Loaded="NumberBox_Loaded" Minimum="0" Maximum="1000"
+							                SmallChange="1" LargeChange="10" SpinButtonPlacementMode="Inline"
+							                Value="{x:Bind ViewModel.FrontEdgeSyncFrameRate, Mode=TwoWay}" />
+						</local:SettingsCard>
+					</local:SettingsExpander.Items>
+				</local:SettingsExpander>
+				<!-- VRR is deferred. ScalingService also ignores the saved VRR preference.
+				<local:SettingsCard x:Uid="Home_FrameSync_VRR" IsWrapEnabled="True">
+					<local:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE7F4;" /></local:SettingsCard.HeaderIcon>
+					<ToggleSwitch x:Uid="ToggleSwitch" IsOn="{x:Bind ViewModel.IsVRREnabled, Mode=TwoWay}" />
 				</local:SettingsCard>
+				-->
+			</local:SettingsGroup>
+			<local:SettingsGroup x:Uid="Home_Toolbar">
+				<local:SettingsExpander x:Uid="Home_Toolbar_Shortcuts"
+				                        IsExpanded="False"
+				                        IsWrapEnabled="True">
+					<local:SettingsExpander.HeaderIcon>
+						<FontIcon Glyph="&#xE765;" />
+					</local:SettingsExpander.HeaderIcon>
+					<local:SettingsExpander.Items>
+						<local:SettingsCard x:Uid="Home_Toolbar_StateToggle"
+						                    IsWrapEnabled="True">
+							<local:SettingsCard.HeaderIcon>
+								<FontIcon Glyph="&#xF69E;" />
+							</local:SettingsCard.HeaderIcon>
+							<local:ShortcutControl x:Uid="Home_Toolbar_StateToggle_ShortcutControl">
+								<local:ShortcutControl.Action>
+									<local:ShortcutAction>Toolbar</local:ShortcutAction>
+								</local:ShortcutControl.Action>
+							</local:ShortcutControl>
+						</local:SettingsCard>
+						<local:SettingsCard x:Uid="Home_Toolbar_Profiler" IsWrapEnabled="True">
+							<local:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE9D9;" /></local:SettingsCard.HeaderIcon>
+							<local:ShortcutControl x:Uid="Home_Toolbar_Profiler_ShortcutControl">
+								<local:ShortcutControl.Action><local:ShortcutAction>Profiler</local:ShortcutAction></local:ShortcutControl.Action>
+							</local:ShortcutControl>
+						</local:SettingsCard>
+						<local:SettingsCard x:Uid="Home_Toolbar_EffectParameters" IsWrapEnabled="True">
+							<local:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE9E9;" /></local:SettingsCard.HeaderIcon>
+							<local:ShortcutControl x:Uid="Home_Toolbar_EffectParameters_ShortcutControl">
+								<local:ShortcutControl.Action><local:ShortcutAction>EffectParameters</local:ShortcutAction></local:ShortcutControl.Action>
+							</local:ShortcutControl>
+						</local:SettingsCard>
+						<local:SettingsCard x:Uid="Home_Toolbar_Comparison" IsWrapEnabled="True">
+							<local:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE890;" /></local:SettingsCard.HeaderIcon>
+							<local:ShortcutControl x:Uid="Home_Toolbar_Comparison_ShortcutControl">
+								<local:ShortcutControl.Action><local:ShortcutAction>Comparison</local:ShortcutAction></local:ShortcutControl.Action>
+							</local:ShortcutControl>
+						</local:SettingsCard>
+						<local:SettingsCard x:Uid="Home_Toolbar_Screenshot" IsWrapEnabled="True">
+							<local:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE722;" /></local:SettingsCard.HeaderIcon>
+							<local:ShortcutControl x:Uid="Home_Toolbar_Screenshot_ShortcutControl">
+								<local:ShortcutControl.Action><local:ShortcutAction>Screenshot</local:ShortcutAction></local:ShortcutControl.Action>
+							</local:ShortcutControl>
+						</local:SettingsCard>
+						<local:SettingsCard x:Uid="Home_Toolbar_ToolbarPin" IsWrapEnabled="True">
+							<local:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE718;" /></local:SettingsCard.HeaderIcon>
+							<local:ShortcutControl x:Uid="Home_Toolbar_ToolbarPin_ShortcutControl">
+								<local:ShortcutControl.Action><local:ShortcutAction>ToolbarPin</local:ShortcutAction></local:ShortcutControl.Action>
+							</local:ShortcutControl>
+						</local:SettingsCard>
+					</local:SettingsExpander.Items>
+				</local:SettingsExpander>
 				<local:SettingsExpander x:Uid="Home_Toolbar_InitialState">
 					<local:SettingsExpander.HeaderIcon>
 						<FontIcon Glyph="&#xE890;" />

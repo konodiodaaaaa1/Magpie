@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "FrameTrace.h"
 #include "Win32Helper.h"
 #include "StrHelper.h"
 #include <dcomp.h>
@@ -10,8 +11,232 @@
 #pragma pop_macro("ShellExecute")
 #include <ShlObj.h>
 #include <wil/token_helpers.h>
+#include <span>
 
 namespace Magpie {
+
+namespace {
+
+struct DisplayTargetInfo {
+	std::wstring gdiDeviceName;
+	std::wstring deviceId;
+	std::wstring friendlyName;
+};
+
+std::vector<DisplayTargetInfo> GetActiveDisplayTargets() noexcept {
+	std::vector<DisplayTargetInfo> result;
+
+	for (int attempt = 0; attempt < 3; ++attempt) {
+		UINT32 pathCount = 0;
+		UINT32 modeCount = 0;
+		LONG status = GetDisplayConfigBufferSizes(
+			QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount);
+		if (status != ERROR_SUCCESS) {
+			Logger::Get().Warn(fmt::format(
+				"GetDisplayConfigBufferSizes 失败\n\t错误码: {}", status));
+			return result;
+		}
+
+		std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+		std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+		status = QueryDisplayConfig(
+			QDC_ONLY_ACTIVE_PATHS,
+			&pathCount,
+			paths.data(),
+			&modeCount,
+			modes.data(),
+			nullptr);
+		if (status == ERROR_INSUFFICIENT_BUFFER) {
+			continue;
+		}
+		if (status != ERROR_SUCCESS) {
+			Logger::Get().Warn(fmt::format(
+				"QueryDisplayConfig 失败\n\t错误码: {}", status));
+			return result;
+		}
+
+		paths.resize(pathCount);
+		result.reserve(pathCount);
+		for (const DISPLAYCONFIG_PATH_INFO& path : paths) {
+			DISPLAYCONFIG_SOURCE_DEVICE_NAME sourceName{};
+			sourceName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+			sourceName.header.size = sizeof(sourceName);
+			sourceName.header.adapterId = path.sourceInfo.adapterId;
+			sourceName.header.id = path.sourceInfo.id;
+			if (DisplayConfigGetDeviceInfo(&sourceName.header) != ERROR_SUCCESS) {
+				continue;
+			}
+
+			DISPLAYCONFIG_TARGET_DEVICE_NAME targetName{};
+			targetName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+			targetName.header.size = sizeof(targetName);
+			targetName.header.adapterId = path.targetInfo.adapterId;
+			targetName.header.id = path.targetInfo.id;
+			if (DisplayConfigGetDeviceInfo(&targetName.header) != ERROR_SUCCESS) {
+				continue;
+			}
+
+			DisplayTargetInfo& target = result.emplace_back();
+			target.gdiDeviceName = sourceName.viewGdiDeviceName;
+			target.deviceId = targetName.monitorDevicePath;
+			target.friendlyName = targetName.monitorFriendlyDeviceName;
+		}
+
+		return result;
+	}
+
+	Logger::Get().Warn("显示配置在枚举期间持续变化");
+	return result;
+}
+
+float QuerySdrWhiteNits(std::wstring_view gdiDeviceName) noexcept {
+	UINT32 pathCount = 0;
+	UINT32 modeCount = 0;
+	if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathCount, &modeCount) != ERROR_SUCCESS) {
+		return 0.0f;
+	}
+	std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+	std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+	if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathCount, paths.data(), &modeCount,
+		modes.data(), nullptr) != ERROR_SUCCESS) {
+		return 0.0f;
+	}
+	for (const auto& path : std::span(paths.data(), pathCount)) {
+		DISPLAYCONFIG_SOURCE_DEVICE_NAME sourceName{};
+		sourceName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+		sourceName.header.size = sizeof(sourceName);
+		sourceName.header.adapterId = path.sourceInfo.adapterId;
+		sourceName.header.id = path.sourceInfo.id;
+		if (DisplayConfigGetDeviceInfo(&sourceName.header) != ERROR_SUCCESS ||
+			CompareStringOrdinal(sourceName.viewGdiDeviceName, -1,
+				gdiDeviceName.data(), static_cast<int>(gdiDeviceName.size()), TRUE) != CSTR_EQUAL) {
+			continue;
+		}
+		DISPLAYCONFIG_SDR_WHITE_LEVEL white{};
+		white.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
+		white.header.size = sizeof(white);
+		white.header.adapterId = path.targetInfo.adapterId;
+		white.header.id = path.targetInfo.id;
+		if (DisplayConfigGetDeviceInfo(&white.header) == ERROR_SUCCESS && white.SDRWhiteLevel > 0) {
+			const float nits = 80.0f * static_cast<float>(white.SDRWhiteLevel) / 1000.0f;
+			return std::clamp(nits, 40.0f, 1000.0f);
+		}
+	}
+	return 0.0f;
+}
+
+bool EqualDeviceName(std::wstring_view left, std::wstring_view right) noexcept {
+	return CompareStringOrdinal(
+		left.data(), (int)left.size(),
+		right.data(), (int)right.size(), TRUE) == CSTR_EQUAL;
+}
+
+}
+
+float Win32Helper::GetMonitorSdrWhiteNits(HMONITOR monitor) noexcept {
+	if (!monitor) return 0.0f;
+	MONITORINFOEXW info{};
+	info.cbSize = sizeof(info);
+	if (!GetMonitorInfoW(monitor, &info)) return 0.0f;
+	return QuerySdrWhiteNits(info.szDevice);
+}
+
+std::vector<Win32Helper::DisplayMonitorInfo> Win32Helper::GetDisplayMonitors() noexcept {
+	std::vector<DisplayMonitorInfo> result;
+	const std::vector<DisplayTargetInfo> activeTargets = GetActiveDisplayTargets();
+
+	struct EnumContext {
+		std::vector<DisplayMonitorInfo>& monitors;
+		const std::vector<DisplayTargetInfo>& targets;
+	} context{ result, activeTargets };
+
+	const MONITORENUMPROC enumProc = [](HMONITOR hMonitor, HDC, LPRECT, LPARAM data) -> BOOL {
+		auto& context = *reinterpret_cast<EnumContext*>(data);
+
+		MONITORINFOEXW monitorInfo{};
+		monitorInfo.cbSize = sizeof(monitorInfo);
+		if (!GetMonitorInfoW(hMonitor, &monitorInfo)) {
+			Logger::Get().Win32Warn("GetMonitorInfoW 失败");
+			return TRUE;
+		}
+
+		DisplayMonitorInfo info;
+		info.handle = hMonitor;
+		info.rect = monitorInfo.rcMonitor;
+		info.gdiDeviceName = monitorInfo.szDevice;
+		info.isPrimary = (monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
+
+		// EnumDisplayDevices 返回的 DeviceString 经常只是“通用即插即用显示器”。
+		// 使用活动显示路径将 GDI 显示源映射到来自 EDID 的物理型号和稳定设备路径。
+		for (const DisplayTargetInfo& target : context.targets) {
+			if (EqualDeviceName(target.gdiDeviceName, info.gdiDeviceName)) {
+				info.deviceId = target.deviceId;
+				info.friendlyName = target.friendlyName;
+				break;
+			}
+		}
+
+		// 旧系统或显示驱动未提供 DisplayConfig 信息时保留原有回退逻辑。
+		std::wstring fallbackId;
+		std::wstring fallbackName;
+		for (DWORD index = 0;; ++index) {
+			DISPLAY_DEVICEW device{};
+			device.cb = sizeof(device);
+			if (!EnumDisplayDevicesW(
+				monitorInfo.szDevice,
+				index,
+				&device,
+				EDD_GET_DEVICE_INTERFACE_NAME)) {
+				break;
+			}
+
+			if (fallbackId.empty()) {
+				fallbackId = device.DeviceID;
+				fallbackName = device.DeviceString;
+			}
+			if ((device.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0) {
+				fallbackId = device.DeviceID;
+				fallbackName = device.DeviceString;
+				break;
+			}
+		}
+
+		if (info.deviceId.empty()) {
+			info.deviceId = std::move(fallbackId);
+		}
+		if (info.friendlyName.empty()) {
+			info.friendlyName = std::move(fallbackName);
+		}
+		if (info.deviceId.empty()) {
+			info.deviceId = info.gdiDeviceName;
+		}
+		if (info.friendlyName.empty()) {
+			info.friendlyName = info.gdiDeviceName;
+		}
+
+		context.monitors.emplace_back(std::move(info));
+		return TRUE;
+	};
+
+	if (!EnumDisplayMonitors(nullptr, nullptr, enumProc, reinterpret_cast<LPARAM>(&context))) {
+		Logger::Get().Win32Error("EnumDisplayMonitors 失败");
+		result.clear();
+		return result;
+	}
+
+	std::sort(result.begin(), result.end(), [](const DisplayMonitorInfo& left,
+		const DisplayMonitorInfo& right) {
+		if (left.isPrimary != right.isPrimary) {
+			return left.isPrimary;
+		}
+		if (left.rect.top != right.rect.top) {
+			return left.rect.top < right.rect.top;
+		}
+		return left.rect.left < right.rect.left;
+	});
+
+	return result;
+}
 
 std::wstring Win32Helper::GetWindowClassName(HWND hWnd) noexcept {
 	// 窗口类名最多 256 个字符
@@ -291,6 +516,7 @@ int16_t Win32Helper::AdvancedWindowHitTest(HWND hWnd, POINT ptScreen, UINT timeo
 }
 
 bool Win32Helper::IsWindowHung(HWND hWnd) noexcept {
+	FrameTrace::Scope traceProbe(FrameTrace::Event::FocusProbe);
 	// 保险起见不使用 SMTO_ABORTIFHUNG。我不知道 OS 怎么判断线程是否处于无响应
 	// 状态，考虑到 IsHungAppWindow 有误报的情况 (GH#1244)，最好不要依赖。
 	return 0 == SendMessageTimeout(hWnd, WM_NULL, 0, 0, SMTO_ERRORONEXIT, 500, nullptr);
@@ -359,6 +585,7 @@ bool Win32Helper::ReadTextFile(const wchar_t* fileName, std::string& result) noe
 	// 获取文件长度
 	int fd = _fileno(hFile.get());
 	long size = _filelength(fd);
+	if (size < 0) return false;
 
 	result.clear();
 	result.resize(static_cast<size_t>(size) + 1, 0);
@@ -366,7 +593,7 @@ bool Win32Helper::ReadTextFile(const wchar_t* fileName, std::string& result) noe
 	size_t readed = fread(result.data(), 1, size, hFile.get());
 	result.resize(readed);
 
-	return true;
+	return ferror(hFile.get()) == 0;
 }
 
 bool Win32Helper::WriteTextFile(const wchar_t* fileName, std::string_view text) noexcept {
@@ -378,8 +605,13 @@ bool Win32Helper::WriteTextFile(const wchar_t* fileName, std::string_view text) 
 		return false;
 	}
 
-	fwrite(text.data(), 1, text.size(), hFile.get());
-	return true;
+	if (fwrite(text.data(), 1, text.size(), hFile.get()) != text.size() ||
+		fflush(hFile.get()) != 0) {
+		Logger::Get().Error("Writing text file or flushing buffered data failed");
+		return false;
+	}
+	// Buffered writes may fail only when closing the file.
+	return fclose(hFile.release()) == 0;
 }
 
 bool Win32Helper::FileExists(const wchar_t* fileName) noexcept {

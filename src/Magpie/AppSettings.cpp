@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "AppSettings.h"
 #include "App.h"
+#include "ErrorService.h"
 #include "AutoStartHelper.h"
 #include "CommonSharedConstants.h"
 #include "JsonHelper.h"
@@ -88,6 +89,12 @@ static void WriteProfile(rapidjson::PrettyWriter<rapidjson::StringBuffer>& write
 	writer.Uint((uint32_t)profile.captureMethod);
 	writer.Key("multiMonitorUsage");
 	writer.Uint((uint32_t)profile.multiMonitorUsage);
+	if (!profile.preferredMonitorId.empty()) {
+		writer.Key("preferredMonitorId");
+		writer.String(StrHelper::UTF16ToUTF8(profile.preferredMonitorId).c_str());
+		writer.Key("preferredMonitorName");
+		writer.String(StrHelper::UTF16ToUTF8(profile.preferredMonitorName).c_str());
+	}
 
 	writer.Key("initialWindowedScaleFactor");
 	writer.Uint((uint32_t)profile.initialWindowedScaleFactor);
@@ -116,6 +123,8 @@ static void WriteProfile(rapidjson::PrettyWriter<rapidjson::StringBuffer>& write
 	writer.Bool(profile.IsAdjustCursorSpeed());
 	writer.Key("disableDirectFlip");
 	writer.Bool(profile.IsDirectFlipDisabled());
+	writer.Key("enableHdrCompatibility");
+	writer.Bool(profile.IsHdrCompatibilityEnabled());
 
 	writer.Key("cursorScaling");
 	writer.Uint((uint32_t)profile.cursorScaling);
@@ -239,42 +248,33 @@ bool AppSettings::Initialize() noexcept {
 		return false;
 	}
 
-	if (configText.empty()) {
-		Logger::Get().Info("配置文件为空");
-		_SetDefaultScalingModes();
-		_SetDefaultShortcuts();
-		SaveAsync();
-		return true;
-	}
-
-	rapidjson::Document doc;
-	doc.ParseInsitu(configText.data());
-	if (doc.HasParseError()) {
-		Logger::Get().Error(fmt::format("解析配置失败\n\t错误码: {}", (int)doc.GetParseError()));
-		ResourceLoader resourceLoader =
-			ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
-		hstring title = resourceLoader.GetString(L"AppSettings_ErrorDialog_NotValidJson");
-		hstring content = resourceLoader.GetString(L"AppSettings_ErrorDialog_ConfigLocation");
-		ShowErrorMessage(title.c_str(),
-			fmt::format(fmt::runtime(std::wstring_view(content)), existingConfigPath.native()).c_str());
-		return false;
-	}
-
-	if (!doc.IsObject()) {
-		Logger::Get().Error("配置文件根元素不是 Object");
-		ResourceLoader resourceLoader =
-			ResourceLoader::GetForCurrentView(CommonSharedConstants::APP_RESOURCE_MAP_ID);
-		hstring title = resourceLoader.GetString(L"AppSettings_ErrorDialog_ParseFailed");
-		hstring content = resourceLoader.GetString(L"AppSettings_ErrorDialog_ConfigLocation");
-		ShowErrorMessage(title.c_str(),
-			fmt::format(fmt::runtime(std::wstring_view(content)), existingConfigPath.native()).c_str());
-		return false;
-	}
+    bool recovered = false;
+    if (!ConfigPersistence::IsValid(configText)) {
+        // Preserve the exact source before any recovery or migration writes.
+        const auto damagedPath = std::filesystem::path(existingConfigPath.native() +
+            L".corrupt-" + std::to_wstring(std::chrono::system_clock::now().time_since_epoch().count()));
+        if (!CopyFileW(existingConfigPath.c_str(), damagedPath.c_str(), TRUE)) {
+            logger.Win32Error("Unable to preserve damaged configuration");
+            return false;
+        }
+        std::string replacement = ConfigPersistence::Read(
+            std::filesystem::path(existingConfigPath.native() + L".bak"));
+        const bool fromBackup = ConfigPersistence::IsValid(replacement);
+        if (!fromBackup) replacement = ConfigPersistence::RecoverPrefix(configText);
+        if (replacement.empty()) replacement = "{}";
+        configText = std::move(replacement);
+        logger.Warn(fromBackup ? "Recovered configuration from backup" :
+            "Recovered complete configuration entries; missing entries use defaults");
+        recovered = true;
+    }
+    rapidjson::Document doc;
+    doc.ParseInsitu(configText.data());
 
 	_LoadSettings(((const rapidjson::Document&)doc).GetObj());
+	if (recovered && _scalingModes.empty()) _SetDefaultScalingModes();
 
 	// 迁移旧版配置后立刻保存，_SetDefaultShortcuts 用于确保快捷键不为空
-	if (_SetDefaultShortcuts() || _isConfigMigrationNeeded ||
+	if (_SetDefaultShortcuts() || recovered || _isConfigMigrationNeeded ||
 		!Win32Helper::FileExists(_configPath.c_str()))
 	{
 		SaveAsync();
@@ -284,18 +284,52 @@ bool AppSettings::Initialize() noexcept {
 }
 
 bool AppSettings::Save() noexcept {
-	_UpdateWindowPlacement();
-	return _Save(*this);
+    try {
+        _UpdateWindowPlacement();
+        const uint64_t revision = ++_saveState->nextRevision;
+        const std::string json = _Serialize(*this);
+        if (ConfigPersistence::WriteAtomic(_configPath, json, revision, *_saveState)) return true;
+        const DWORD error = GetLastError();
+        Logger::Get().Win32Error("Save configuration failed");
+        ErrorService::Get().Report(ScalingError::ConfigurationWriteFailed,
+            StrHelper::UTF16ToUTF8(_configPath.native()), nullptr, error);
+    } catch (...) {
+        Logger::Get().Error("Save configuration failed with an exception");
+        ErrorService::Get().Report(ScalingError::ConfigurationWriteFailed);
+    }
+    return false;
 }
 
-fire_and_forget AppSettings::SaveAsync() noexcept {
-	_UpdateWindowPlacement();
-
-	// 拷贝当前配置
-	_AppSettingsData data = *this;
-	co_await resume_background();
-
-	_Save(data);
+fire_and_forget AppSettings::SaveAsync(std::function<void(bool)> onCompleted) noexcept {
+	bool succeeded = false;
+	std::filesystem::path path;
+	try {
+		path = _configPath;
+		_UpdateWindowPlacement();
+		// Snapshot on the UI thread; background work owns only serialized data.
+		const std::string json = _Serialize(*this);
+		const auto state = _saveState;
+		const uint64_t revision = ++state->nextRevision;
+		co_await resume_background();
+		succeeded = ConfigPersistence::WriteAtomic(path, json, revision, *state);
+		if (!succeeded) {
+			const DWORD error = GetLastError();
+			Logger::Get().Win32Error("Save configuration failed");
+			ErrorService::Get().Report(ScalingError::ConfigurationWriteFailed,
+				StrHelper::UTF16ToUTF8(path.native()), nullptr, error);
+		}
+	} catch (...) {
+		Logger::Get().Error("Save configuration failed with an exception");
+		ErrorService::Get().Report(ScalingError::ConfigurationWriteFailed,
+			StrHelper::UTF16ToUTF8(path.native()));
+	}
+	// This callback must not access UI objects. Parameter saves only publish an
+	// atomic result into shared state, including after their overlay is closed.
+	try {
+		if (onCompleted) onCompleted(succeeded);
+	} catch (...) {
+		Logger::Get().Error("Configuration save completion failed");
+	}
 }
 
 void AppSettings::IsPortableMode(bool value) noexcept {
@@ -548,21 +582,16 @@ void AppSettings::_UpdateWindowPlacement() noexcept {
 	}
 }
 
-bool AppSettings::_Save(const _AppSettingsData& data) noexcept {
-	if (!Win32Helper::CreateDir(data._configDir.native(), true)) {
-		Logger::Get().Win32Error("创建配置文件夹失败");
-		return false;
-	}
-
+std::string AppSettings::_Serialize(const _AppSettingsData& data) {
 	rapidjson::StringBuffer json;
 	rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(json);
 	writer.StartObject();
 
 	writer.Key("language");
-	if (_language < 0) {
+	if (data._language < 0) {
 		writer.String("");
 	} else {
-		const wchar_t* language = LocalizationService::SupportedLanguages()[_language];
+		const wchar_t* language = LocalizationService::SupportedLanguages()[data._language];
 		writer.String(StrHelper::UTF16ToUTF8(language).c_str());
 	}
 
@@ -591,6 +620,17 @@ bool AppSettings::_Save(const _AppSettingsData& data) noexcept {
 	writer.Uint(EncodeShortcut(data._shortcuts[(size_t)ShortcutAction::WindowedModeScale]));
 	writer.Key("toolbar");
 	writer.Uint(EncodeShortcut(data._shortcuts[(size_t)ShortcutAction::Toolbar]));
+	writer.Key("profiler");
+	writer.Uint(EncodeShortcut(data._shortcuts[(size_t)ShortcutAction::Profiler]));
+	writer.Key("effectParameters");
+	writer.Uint(EncodeShortcut(data._shortcuts[(size_t)ShortcutAction::EffectParameters]));
+	writer.Key("screenshot");
+	writer.Uint(EncodeShortcut(data._shortcuts[(size_t)ShortcutAction::Screenshot]));
+	writer.Key("toolbarPin");
+	writer.Uint(EncodeShortcut(data._shortcuts[(size_t)ShortcutAction::ToolbarPin]));
+	writer.Key("comparison");
+	writer.Uint(EncodeShortcut(data._shortcuts[(size_t)ShortcutAction::Comparison]));
+
 	writer.EndObject();
 
 	writer.Key("countdownSeconds");
@@ -633,6 +673,12 @@ bool AppSettings::_Save(const _AppSettingsData& data) noexcept {
 	writer.Uint((uint32_t)data._duplicateFrameDetectionMode);
 	writer.Key("enableStatisticsForDynamicDetection");
 	writer.Bool(data._isStatisticsForDynamicDetectionEnabled);
+	writer.Key("frontEdgeSync");
+	writer.Bool(data._isFrontEdgeSyncEnabled);
+	writer.Key("vrr");
+	writer.Bool(data._isVRREnabled);
+	writer.Key("frontEdgeSyncFrameRate");
+	writer.Double(data._frontEdgeSyncFrameRate);
 	writer.Key("minFrameRate");
 	writer.Double(data._minFrameRate);
 	writer.Key("disableFP16");
@@ -641,8 +687,10 @@ bool AppSettings::_Save(const _AppSettingsData& data) noexcept {
 	writer.Uint(data._experimentalDlssnrSettingsVersion);
 	writer.Key("experimentalDlssSrSettingsVersion");
 	writer.Uint(data._experimentalDlssSrSettingsVersion);
+	writer.Key("experimentalDepthRemovalVersion");
+	writer.Uint(data._experimentalDepthRemovalVersion);
 
-	ScalingModesService::Get().Export(writer);
+	ScalingModesService::Export(writer, data._scalingModes);
 
 	writer.Key("profiles");
 	writer.StartArray();
@@ -655,14 +703,14 @@ bool AppSettings::_Save(const _AppSettingsData& data) noexcept {
 	writer.Key("overlay");
 	writer.StartObject();
 	writer.Key("fullscreenInitialToolbarState");
-	writer.Uint((uint32_t)_fullscreenInitialToolbarState);
+	writer.Uint((uint32_t)data._fullscreenInitialToolbarState);
 	writer.Key("windowedInitialToolbarState");
-	writer.Uint((uint32_t)_windowedInitialToolbarState);
+	writer.Uint((uint32_t)data._windowedInitialToolbarState);
 	writer.Key("screenshotsDir");
-	writer.String(StrHelper::UTF16ToUTF8(_screenshotsDir.native()).c_str());
+	writer.String(StrHelper::UTF16ToUTF8(data._screenshotsDir.native()).c_str());
 	writer.Key("windows");
 	writer.StartObject();
-	for (const auto& [name, windowOption] : _overlayOptions.windows) {
+	for (const auto& [name, windowOption] : data._overlayOptions.windows) {
 		writer.Key(name.c_str());
 		writer.StartObject();
 		writer.Key("hArea");
@@ -680,14 +728,7 @@ bool AppSettings::_Save(const _AppSettingsData& data) noexcept {
 
 	writer.EndObject();
 
-	// 防止并行写入
-	auto lock = _saveLock.lock_exclusive();
-	if (!Win32Helper::WriteTextFile(data._configPath.c_str(), { json.GetString(), json.GetLength() })) {
-		Logger::Get().Error("保存配置失败");
-		return false;
-	}
-
-	return true;
+	return { json.GetString(), json.GetLength() };
 }
 
 // 永远不会失败，遇到不合法的配置项时静默忽略
@@ -698,6 +739,9 @@ void AppSettings::_LoadSettings(const rapidjson::GenericObject<true, rapidjson::
 	_experimentalDlssSrSettingsVersion = 0;
 	JsonHelper::ReadUInt(root, "experimentalDlssSrSettingsVersion",
 		_experimentalDlssSrSettingsVersion);
+	_experimentalDepthRemovalVersion = 0;
+	JsonHelper::ReadUInt(root, "experimentalDepthRemovalVersion",
+		_experimentalDepthRemovalVersion);
 
 	{
 		std::wstring language;
@@ -782,6 +826,27 @@ void AppSettings::_LoadSettings(const rapidjson::GenericObject<true, rapidjson::
 	if (shortcutsNode != root.MemberEnd() && shortcutsNode->value.IsObject()) {
 		auto shortcutsObj = shortcutsNode->value.GetObj();
 
+		if (auto node = shortcutsObj.FindMember("profiler");
+			node != shortcutsObj.MemberEnd() && node->value.IsUint()) {
+			DecodeShortcut(node->value.GetUint(), _shortcuts[(size_t)ShortcutAction::Profiler]);
+		}
+		if (auto node = shortcutsObj.FindMember("effectParameters");
+			node != shortcutsObj.MemberEnd() && node->value.IsUint()) {
+			DecodeShortcut(node->value.GetUint(), _shortcuts[(size_t)ShortcutAction::EffectParameters]);
+		}
+		if (auto node = shortcutsObj.FindMember("screenshot");
+			node != shortcutsObj.MemberEnd() && node->value.IsUint()) {
+			DecodeShortcut(node->value.GetUint(), _shortcuts[(size_t)ShortcutAction::Screenshot]);
+		}
+		if (auto node = shortcutsObj.FindMember("toolbarPin");
+			node != shortcutsObj.MemberEnd() && node->value.IsUint()) {
+			DecodeShortcut(node->value.GetUint(), _shortcuts[(size_t)ShortcutAction::ToolbarPin]);
+		}
+		if (auto node = shortcutsObj.FindMember("comparison");
+			node != shortcutsObj.MemberEnd() && node->value.IsUint()) {
+			DecodeShortcut(node->value.GetUint(), _shortcuts[(size_t)ShortcutAction::Comparison]);
+		}
+
 		auto scaleNode = shortcutsObj.FindMember("scale");
 		if (scaleNode != shortcutsObj.MemberEnd() && scaleNode->value.IsUint()) {
 			DecodeShortcut(scaleNode->value.GetUint(), _shortcuts[(size_t)ShortcutAction::Scale]);
@@ -849,36 +914,20 @@ void AppSettings::_LoadSettings(const rapidjson::GenericObject<true, rapidjson::
 	}
 	JsonHelper::ReadBool(root, "enableStatisticsForDynamicDetection", _isStatisticsForDynamicDetectionEnabled);
 	JsonHelper::ReadFloat(root, "minFrameRate", _minFrameRate);
+	JsonHelper::ReadBool(root, "frontEdgeSync", _isFrontEdgeSyncEnabled);
+	JsonHelper::ReadBool(root, "vrr", _isVRREnabled);
+	JsonHelper::ReadFloat(root, "frontEdgeSyncFrameRate", _frontEdgeSyncFrameRate);
+	_frontEdgeSyncFrameRate = SanitizePresentationFrameRate(_frontEdgeSyncFrameRate);
 	JsonHelper::ReadBool(root, "disableFP16", _isFP16Disabled);
 
 	[[maybe_unused]] bool result = ScalingModesService::Get().Import(root, true);
 	assert(result);
-
-	if (_experimentalDlssnrSettingsVersion < 1) {
-		uint32_t migratedEffects = 0;
-		for (ScalingMode& scalingMode : _scalingModes) {
-			for (EffectItem& effect : scalingMode.effects) {
-				if (effect.name != L"DLSSNR\\DLSSNR_AI_Filter") {
-					continue;
-				}
-
-				auto it = effect.parameters.find(L"guidanceMode");
-				if (it != effect.parameters.end() &&
-					std::abs(it->second - 1.0f) < FLOAT_EPSILON<float>)
-				{
-					// v0 used Force Zero as the experimental default. v1 changes
-					// that default to Available. This migration runs only once;
-					// selecting Force Zero again after v1 remains user-owned.
-					it->second = 0.0f;
-					++migratedEffects;
-				}
-			}
-		}
-
+	if (_experimentalDepthRemovalVersion < 1) {
 		Logger::Get().Info(fmt::format(
-			"DLSSNR config migration v{}->v1: guidanceMode 1->0 for {} effect(s)",
-			_experimentalDlssnrSettingsVersion,
-			migratedEffects));
+			"Frame Guidance config migration v{}->v1: learned-depth settings normalized",
+			_experimentalDepthRemovalVersion));
+		_experimentalDepthRemovalVersion = 1;
+		_isConfigMigrationNeeded = true;
 	}
 
 	if (_experimentalDlssnrSettingsVersion < 2) {
@@ -1108,6 +1157,8 @@ bool AppSettings::_LoadProfile(
 		}
 		profile.multiMonitorUsage = (MultiMonitorUsage)multiMonitorUsage;
 	}
+	JsonHelper::ReadString(profileObj, "preferredMonitorId", profile.preferredMonitorId, true);
+	JsonHelper::ReadString(profileObj, "preferredMonitorName", profile.preferredMonitorName, true);
 
 	{
 		uint32_t factor = (uint32_t)InitialWindowedScaleFactor::Auto;
@@ -1173,6 +1224,7 @@ bool AppSettings::_LoadProfile(
 	}
 	JsonHelper::ReadBoolFlag(profileObj, "adjustCursorSpeed", ScalingFlags::AdjustCursorSpeed, profile.scalingFlags);
 	JsonHelper::ReadBoolFlag(profileObj, "disableDirectFlip", ScalingFlags::DisableDirectFlip, profile.scalingFlags);
+	JsonHelper::ReadBoolFlag(profileObj, "enableHdrCompatibility", ScalingFlags::EnableHdrCompatibility, profile.scalingFlags);
 
 	{
 		uint32_t cursorScaling = (uint32_t)CursorScaling::NoScaling;
@@ -1266,11 +1318,41 @@ bool AppSettings::_SetDefaultShortcuts() noexcept {
 		changed = true;
 	}
 
+    if (Shortcut& shortcut = _shortcuts[(size_t)ShortcutAction::Profiler]; shortcut.IsEmpty()) {
+        shortcut.alt = true;
+        shortcut.shift = true;
+        shortcut.code = 'P';
+        changed = true;
+    }
+    if (Shortcut& shortcut = _shortcuts[(size_t)ShortcutAction::EffectParameters]; shortcut.IsEmpty()) {
+        shortcut.alt = true;
+        shortcut.shift = true;
+        shortcut.code = 'E';
+        changed = true;
+    }
+    if (Shortcut& shortcut = _shortcuts[(size_t)ShortcutAction::Screenshot]; shortcut.IsEmpty()) {
+        shortcut.alt = true;
+        shortcut.shift = true;
+        shortcut.code = 'S';
+        changed = true;
+    }
+    if (Shortcut& shortcut = _shortcuts[(size_t)ShortcutAction::ToolbarPin]; shortcut.IsEmpty()) {
+        shortcut.alt = true;
+        shortcut.shift = true;
+        shortcut.code = 'F';
+        changed = true;
+    }
+    if (Shortcut& shortcut = _shortcuts[(size_t)ShortcutAction::Comparison]; shortcut.IsEmpty()) {
+        shortcut.alt = true;
+        shortcut.shift = true;
+        shortcut.code = 'C';
+        changed = true;
+    }
 	return changed;
 }
 
 void AppSettings::_SetDefaultScalingModes() noexcept {
-	_scalingModes.resize(7);
+	_scalingModes.resize(6);
 
 	// Lanczos
 	{
@@ -1294,18 +1376,9 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 		rcas.name = L"FSR\\FSR_RCAS";
 		rcas.parameters[L"sharpness"] = 0.87f;
 	}
-	// DLSS SR
-	{
-		auto& dlssSr = _scalingModes[2];
-		dlssSr.name = L"DLSS SR";
-
-		auto& effect = dlssSr.effects.emplace_back();
-		effect.name = L"DLSS\\DLSS_SR";
-		effect.scalingType = ::Magpie::ScalingType::Fit;
-	}
 	// RTX Video VSR Ultra
 	{
-		auto& vsrUltra = _scalingModes[3];
+		auto& vsrUltra = _scalingModes[2];
 		vsrUltra.name = L"RTX Video VSR Ultra";
 		vsrUltra.effects.resize(2);
 		vsrUltra.effects[0].name = L"FrameRate_Filter";
@@ -1315,7 +1388,7 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 	}
 	// DLSS Frame Generation
 	{
-		auto& dlssFg = _scalingModes[4];
+		auto& dlssFg = _scalingModes[3];
 		dlssFg.name = L"DLSSFG";
 		dlssFg.effects.resize(2);
 		dlssFg.effects[0].name = L"FrameRate_Filter";
@@ -1323,7 +1396,7 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 	}
 	// XeSS Frame Generation
 	{
-		auto& xessFg = _scalingModes[5];
+		auto& xessFg = _scalingModes[4];
 		xessFg.name = L"XeSSFG";
 		xessFg.effects.resize(2);
 		xessFg.effects[0].name = L"FrameRate_Filter";
@@ -1331,15 +1404,24 @@ void AppSettings::_SetDefaultScalingModes() noexcept {
 	}
 	// DLSS Ray Reconstruction
 	{
-		auto& dlssNr = _scalingModes[6];
+		auto& dlssNr = _scalingModes[5];
 		dlssNr.name = L"DLSSNR";
-		dlssNr.effects.resize(2);
-		dlssNr.effects[0].name = L"FrameRate_Filter";
-		dlssNr.effects[1].name = L"DLSSNR\\DLSSNR_AI_Filter";
+		dlssNr.effects.resize(1);
+		dlssNr.effects[0].name = L"DLSSNR\\DLSSNR_AI_Filter";
 	}
 
 	// 全局缩放模式默认为 Lanczos
 	_defaultProfile.scalingMode = 0;
+}
+
+void AppSettings::ResetScalingModes() noexcept {
+	_scalingModes.clear();
+	for (Profile& profile : _profiles) {
+		// 自定义配置在原缩放模式被删除后回退到全局默认值。
+		profile.scalingMode = -1;
+	}
+	_SetDefaultScalingModes();
+	SaveAsync();
 }
 
 static std::wstring FindOldConfig(const wchar_t* localAppDataDir) noexcept {

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "StepTimer.h"
+#include "FrameTrace.h"
 
 using namespace std::chrono;
 
@@ -7,6 +8,8 @@ namespace Magpie {
 
 void StepTimer::Initialize(float minFrameRate, std::optional<float> maxFrameRate) noexcept {
 	assert(minFrameRate >= 0);
+	_minInterval = {};
+	_maxInterval = nanoseconds::max();
 	if (minFrameRate > 0) {
 		_maxInterval = duration_cast<nanoseconds>(duration<float>(1 / minFrameRate));
 	}
@@ -32,7 +35,8 @@ void StepTimer::Initialize(float minFrameRate, std::optional<float> maxFrameRate
 // ────────▼─────────┬────────┬──────▼─────────
 //    wait │ capture │ render │ wait │ capture
 //
-StepTimerStatus StepTimer::WaitForNextFrame(bool waitMsgForNewFrame, bool& fpsUpdated) noexcept {
+StepTimerStatus StepTimer::WaitForNextFrame(bool waitForNewFrame, bool& fpsUpdated,
+	HANDLE frameArrivedEvent) noexcept {
 	fpsUpdated = false;
 
 	// 不断更新 _nextFrameStartTime 直到新帧到达
@@ -40,8 +44,11 @@ StepTimerStatus StepTimer::WaitForNextFrame(bool waitMsgForNewFrame, bool& fpsUp
 
 	if (_thisFrameStartTime == time_point<steady_clock>{}) {
 		// 等待第一帧，无需更新 FPS
-		if (waitMsgForNewFrame) {
-			WaitMessage();
+		if (waitForNewFrame) {
+			const DWORD result = MsgWaitForMultipleObjectsEx(frameArrivedEvent ? 1 : 0,
+				frameArrivedEvent ? &frameArrivedEvent : nullptr, INFINITE,
+				QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			FrameTrace::Mark(FrameTrace::Event::CaptureWake, result, frameArrivedEvent != nullptr);
 		}
 
 		return StepTimerStatus::WaitForNewFrame;
@@ -63,12 +70,15 @@ StepTimerStatus StepTimer::WaitForNextFrame(bool waitMsgForNewFrame, bool& fpsUp
 	}
 
 	// 有的捕获方法当有新帧时会有消息到达
-	if (waitMsgForNewFrame) {
+	if (waitForNewFrame) {
 		if (_HasMaxInterval()) {
-			_WaitForMsgAndTimer(_maxInterval - delta);
+			_WaitForMsgAndTimer(_maxInterval - delta, frameArrivedEvent);
 		} else {
 			// 没有最小帧率限制则只需等待消息。为了及时更新 FPS，每次等待 500ms
-			MsgWaitForMultipleObjectsEx(0, nullptr, 500, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			const DWORD result = MsgWaitForMultipleObjectsEx(frameArrivedEvent ? 1 : 0,
+				frameArrivedEvent ? &frameArrivedEvent : nullptr, 500,
+				QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+			FrameTrace::Mark(FrameTrace::Event::CaptureWake, result, frameArrivedEvent != nullptr);
 		}
 	}
 
@@ -92,7 +102,8 @@ void StepTimer::PrepareForRender() noexcept {
 	_UpdateFPS(steady_clock::now());
 }
 
-void StepTimer::_WaitForMsgAndTimer(std::chrono::nanoseconds time) noexcept {
+void StepTimer::_WaitForMsgAndTimer(std::chrono::nanoseconds time,
+	HANDLE frameArrivedEvent) noexcept {
 	if (time > 1ms) {
 		if (!_hTimer) {
 			_hTimer.reset(CreateWaitableTimerEx(nullptr, nullptr,
@@ -106,8 +117,10 @@ void StepTimer::_WaitForMsgAndTimer(std::chrono::nanoseconds time) noexcept {
 		SetWaitableTimerEx(_hTimer.get(), &liDueTime, 0, NULL, NULL, 0, 0);
 
 		// 新消息到达则中止等待
-		HANDLE hTimer = _hTimer.get();
-		MsgWaitForMultipleObjectsEx(1, &hTimer, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+		HANDLE handles[]{ _hTimer.get(), frameArrivedEvent };
+		const DWORD result = MsgWaitForMultipleObjectsEx(frameArrivedEvent ? 2 : 1,
+			handles, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+		FrameTrace::Mark(FrameTrace::Event::CaptureWake, result, frameArrivedEvent ? 3 : 2);
 	} else {
 		// 剩余时间在 1ms 以内则“忙等待”
 		Sleep(0);

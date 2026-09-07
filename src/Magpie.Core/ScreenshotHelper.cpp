@@ -34,13 +34,15 @@ uint32_t ScreenshotHelper::FindUnusedScreenshotNum(const std::filesystem::path& 
 	wil::unique_hfind hFind(FindFirstFileEx(
 		pattern.c_str(), FindExInfoBasic, &findData, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH));
 	if (!hFind) {
+		// An empty directory is valid; no matching file is not an I/O failure.
+		if (GetLastError() == ERROR_FILE_NOT_FOUND) return 1;
 		Logger::Get().Win32Error("FindFirstFileEx 失败");
 		return 0;
 	}
 
 	// 新截图应在所有现有截图之后，因此查找最大序号。如果最大序号是 UINT_MAX 则回落
 	// 到查找最小的可用序号，不过这种数据除了特意构造不可能出现
-	uint32_t result = 0;
+	uint32_t result = 1;
 
 	std::string numStr;
 	std::vector<uint32_t> nums;
@@ -65,6 +67,10 @@ uint32_t ScreenshotHelper::FindUnusedScreenshotNum(const std::filesystem::path& 
 
 		result = std::max(result, curNum + 1);
 	} while (FindNextFile(hFind.get(), &findData));
+	if (GetLastError() != ERROR_NO_MORE_FILES) {
+		Logger::Get().Win32Error("FindNextFile failed while finding screenshot number");
+		return 0;
+	}
 
 	if (!shouldFallback) {
 		return result;

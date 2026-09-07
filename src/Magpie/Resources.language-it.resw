@@ -324,6 +324,12 @@
   <data name="Profile_General_3DGameMode.Header" xml:space="preserve">
     <value>Modalità gioco 3D</value>
   </data>
+  <data name="Profile_General_HdrCompatibility.Header" xml:space="preserve">
+    <value>HDR compatibility</value>
+  </data>
+  <data name="Profile_General_HdrCompatibility.Description" xml:space="preserve">
+    <value>Enable the experimental HDR capture-to-effect compatibility path. Keep disabled unless you are testing HDR support</value>
+  </data>
   <data name="ScalingModes_ScaleFlyout_Type_Fit_Description" xml:space="preserve">
     <value>Imposta il fattore di ridimensionamento dopo aver riempito lo schermo con il ridimensionamento proporzionale</value>
   </data>

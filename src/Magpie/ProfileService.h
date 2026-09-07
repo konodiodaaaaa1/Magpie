@@ -24,7 +24,7 @@ public:
 
 	void RemoveProfile(uint32_t profileIdx);
 
-	bool MoveProfile(uint32_t profileIdx, bool isMoveUp);
+	bool MoveProfile(uint32_t fromIndex, uint32_t toIndex);
 
 	const Profile* GetProfileForWindow(HWND hWnd, bool forAutoScale) noexcept;
 
@@ -37,7 +37,7 @@ public:
 	Event<Profile&> ProfileAdded;
 	Event<uint32_t> ProfileRenamed;
 	Event<uint32_t> ProfileRemoved;
-	Event<uint32_t, bool> ProfileMoved;
+	Event<uint32_t, uint32_t> ProfileMoved;
 
 private:
 	ProfileService() = default;

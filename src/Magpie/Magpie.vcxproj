@@ -7,7 +7,10 @@
     <CppWinRTOptimized>true</CppWinRTOptimized>
     <CppWinRTRootNamespaceAutoMerge>true</CppWinRTRootNamespaceAutoMerge>
     <CppWinRTGenerateWindowsMetadata>true</CppWinRTGenerateWindowsMetadata>
+    <CppWinRTEnablePlatformProjection>false</CppWinRTEnablePlatformProjection>
+    <CppWinRT_IncludePath>E:\Magpie-0.6.5-build\native-cppwinrt\union\</CppWinRT_IncludePath>
     <CppWinRTVerbosity>low</CppWinRTVerbosity>
+    <CppWinRTPath>&quot;D:\Windows Kits\10\bin\10.0.26100.0\x64\&quot;</CppWinRTPath>
     <MinimalCoreWin>true</MinimalCoreWin>
     <ProjectGuid>{1239537c-e5b8-427a-9e7f-ea443d1f3529}</ProjectGuid>
     <RootNamespace>$(MSBuildProjectName)</RootNamespace>
@@ -18,8 +21,8 @@
     <ApplicationTypeRevision>10.0</ApplicationTypeRevision>
     <WindowsTargetPlatformVersion Condition="'$(WindowsTargetPlatformVersion)' == ''">10.0.26100.0</WindowsTargetPlatformVersion>
     <WindowsTargetPlatformMinVersion>10.0.26100.0</WindowsTargetPlatformMinVersion>
-    <IntDir>$(SolutionDir)\obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
-    <OutDir>$(SolutionDir)\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(BuildRoot)\obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
+    <OutDir>$(BuildRoot)\bin\$(Platform)\$(Configuration)\</OutDir>
     <GeneratedFilesDir>$(IntDir)\Generated Files\</GeneratedFilesDir>
     <AppxBundlePlatforms>x64|arm64</AppxBundlePlatforms>
     <DesktopCompatible>true</DesktopCompatible>
@@ -70,6 +73,7 @@
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
     <Import Project="$([Microsoft.Build.Utilities.ToolLocationHelper]::GetPlatformExtensionSDKLocation(`WindowsDesktop, Version=10.0.26100.0`, $(TargetPlatformIdentifier), $(TargetPlatformVersion),  $(SDKReferenceDirectoryRoot), $(SDKExtensionDirectoryRoot), $(SDKReferenceRegistryRoot)))\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props" Condition="exists('$([Microsoft.Build.Utilities.ToolLocationHelper]::GetPlatformExtensionSDKLocation(`WindowsDesktop, Version=10.0.26100.0`, $(TargetPlatformIdentifier), $(TargetPlatformVersion),  $(SDKReferenceDirectoryRoot), $(SDKExtensionDirectoryRoot), $(SDKReferenceRegistryRoot)))\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props')" />
+    <Import Project="$(MagpieWindowsKitsPath)\Extension SDKs\WindowsDesktop\10.0.26100.0\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props" Condition="Exists('$(MagpieWindowsKitsPath)\Extension SDKs\WindowsDesktop\10.0.26100.0\DesignTime\CommonConfiguration\Neutral\WindowsDesktop.props')" />
     <Import Project="..\Common.Post.props" />
     <Import Project="..\WinUI.targets" />
   </ImportGroup>
@@ -81,7 +85,7 @@
       <PreprocessorDefinitions>_VSDESIGNER_DONT_LOAD_AS_DLL;DISABLE_XAML_GENERATED_MAIN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- 不知为何 Directory.Build.props 中的不起作用 -->
       <WarningLevel>Level4</WarningLevel>
-      <AdditionalIncludeDirectories>..\Magpie.Core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>E:\Magpie-0.6.5-build\native-cppwinrt\union;..\Magpie.Core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Condition="$(UseClangCL)">
       <AdditionalOptions>$(LlvmArchitectureSwitch) %(AdditionalOptions)</AdditionalOptions>
@@ -97,7 +101,6 @@
       <AdditionalDependencies>Gdi32.lib;Dwmapi.lib;Shell32.lib;Ole32.lib;Imagehlp.lib;Comctl32.lib;Shlwapi.lib;Magnification.lib;bcp47mrm.lib;Shcore.lib;Uxtheme.lib;Taskschd.lib;Dcomp.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="($(EnableDLSSSR) Or $(EnableDLSSFrameGeneration) Or $(EnableDLSSNR)) And '$(Platform)' == 'x64'">$(DLSSSdkDir)\lib\Windows_x86_64\x64\nvsdk_ngx_s.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="($(EnableDLSSFrameGeneration) Or $(EnableDLSSNR)) And '$(Platform)' == 'x64'">D3D12.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalDependencies Condition="$(EnableDepthAnythingV2) And '$(Platform)' == 'x64'">D3D12.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="$(EnableXeSSZeroMV) And '$(Platform)' == 'x64'">$(XeSSSdkDir)\lib\libxess.lib;D3D12.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="$(EnableXeSSFrameGeneration) And '$(Platform)' == 'x64'">$(XeSSSdkDir)\lib\libxess_fg.lib;$(XeSSSdkDir)\lib\libxell.lib;D3D12.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <DelayLoadDLLs>d3dcompiler_47.dll;Magnification.dll;Imagehlp.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
@@ -117,6 +120,8 @@
     </ClInclude>
     <ClInclude Include="AdaptersService.h" />
     <ClInclude Include="AppSettings.h" />
+    <ClInclude Include="ErrorService.h" />
+    <ClInclude Include="ConfigPersistence.h" />
     <ClInclude Include="AppXReader.h" />
     <ClInclude Include="AutoStartHelper.h" />
     <ClInclude Include="BlueInfoBarStyle.h">
@@ -310,6 +315,7 @@
     </ClCompile>
     <ClCompile Include="AdaptersService.cpp" />
     <ClCompile Include="AppSettings.cpp" />
+    <ClCompile Include="ErrorService.cpp" />
     <ClCompile Include="AppXReader.cpp" />
     <ClCompile Include="AutoStartHelper.cpp" />
     <ClCompile Include="BlueInfoBarStyle.cpp">
@@ -740,18 +746,6 @@
   <Target Name="CopyDLSSNRRuntime" AfterTargets="Build" Condition="$(EnableDLSSNR) And '$(Platform)' == 'x64'">
     <Copy SourceFiles="$(DLSSNRRuntimeDir)\nvngx_dlssnr.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
-  <Target Name="CopyFrameGuidanceDepthRuntime" AfterTargets="Build" Condition="$(EnableDepthAnythingV2) And '$(Platform)' == 'x64'">
-    <ItemGroup>
-      <DepthTensorRTRuntime Include="$(OnnxRuntimeTensorRTDir)\*.dll" />
-      <DepthTensorRTSdkRuntime Include="$(TensorRTRuntimeDir)\nvinfer*_10.dll;$(TensorRTRuntimeDir)\nvonnxparser_10.dll" />
-      <DepthDirectMLRuntime Include="$(OnnxRuntimeDirectMLDir)\*.dll;$(DirectMLRuntimeDir)\DirectML.dll" />
-    </ItemGroup>
-    <Copy SourceFiles="$(DepthAnythingModelDir)\model_fp16.onnx;$(DepthAnythingModelDir)\LICENSE.Depth-Anything-V2.txt" DestinationFolder="$(OutDir)\FrameGuidance\DepthAnythingV2" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(DepthTensorRTRuntime);@(DepthTensorRTSdkRuntime)" DestinationFolder="$(OutDir)\FrameGuidance\TensorRT" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(DepthDirectMLRuntime)" DestinationFolder="$(OutDir)\FrameGuidance\DirectML" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(OnnxRuntimeTensorRTDir)\..\..\..\LICENSE;$(OnnxRuntimeTensorRTDir)\..\..\..\ThirdPartyNotices.txt" DestinationFolder="$(OutDir)\FrameGuidance\TensorRT\Licenses" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(OnnxRuntimeDirectMLDir)\..\..\..\LICENSE;$(OnnxRuntimeDirectMLDir)\..\..\..\ThirdPartyNotices.txt;$(DirectMLRuntimeDir)\..\..\LICENSE.txt;$(DirectMLRuntimeDir)\..\..\ThirdPartyNotices.txt" DestinationFolder="$(OutDir)\FrameGuidance\DirectML\Licenses" SkipUnchangedFiles="true" />
-  </Target>
   <Target Name="CopyFSR2ZeroMVRuntime" AfterTargets="Build" Condition="$(EnableFSR2ZeroMV) And '$(Platform)' == 'x64'">
     <Copy SourceFiles="$(FSR2RuntimeDir)\ffx_fsr2_api_x64.dll;$(FSR2RuntimeDir)\ffx_fsr2_api_dx11_x64.dll" DestinationFolder="$(OutDir)" />
     <Copy SourceFiles="$(FSR2SdkDir)\LICENSE.txt" DestinationFiles="$(OutDir)\AMD-FSR2-DX11-LICENSE.txt" />
@@ -772,7 +766,10 @@
 	</Target>
   <Target Name="CopyRTXVideoDenoiseRuntime" AfterTargets="Build" Condition="$(EnableRTXVideoDenoise) And '$(Platform)' == 'x64'">
     <ItemGroup>
-      <RTXVideoRuntimeDll Include="$(VFXRuntimeDir)\*.dll" />
+      <!-- VideoSuperRes uses the NVCV/NPP/NVNGX runtime. Do not redistribute
+           TensorRT libraries bundled for unrelated VFX models. -->
+      <RTXVideoRuntimeDll Include="$(VFXRuntimeDir)\*.dll"
+        Exclude="$(VFXRuntimeDir)\nvinfer*.dll;$(VFXRuntimeDir)\nvonnxparser*.dll" />
       <RTXVideoLicense Include="$(VFXLicenseDir)\*" />
     </ItemGroup>
     <Copy SourceFiles="@(RTXVideoRuntimeDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
@@ -886,3 +883,5 @@
            Text="Release runtime layout is incomplete: $(OutDir)resources.pri was not generated. Do not deploy Magpie.exe by itself." />
   </Target>
 </Project>
+
+

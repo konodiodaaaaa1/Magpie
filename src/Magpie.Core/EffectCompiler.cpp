@@ -223,6 +223,20 @@ static uint32_t GetNextString(std::string_view& source, std::string_view& value)
 	return 0;
 }
 
+static std::string DecodeLabelEscapes(std::string_view value) {
+	std::string result;
+	result.reserve(value.size());
+	for (size_t i = 0; i < value.size(); ++i) {
+		if (value[i] == '\\' && i + 1 < value.size() && value[i + 1] == 'n') {
+			result.push_back('\n');
+			++i;
+		} else {
+			result.push_back(value[i]);
+		}
+	}
+	return result;
+}
+
 template <typename T>
 static uint32_t GetNextNumber(std::string_view& source, T& value) noexcept {
 	RemoveLeadingBlanks<false>(source);
@@ -432,10 +446,11 @@ static uint32_t ResolveHeader(
 }
 
 static uint32_t ResolveParameter(std::string_view block, EffectDesc& desc) noexcept {
-	// 必需的选项: DEFAULT, MIN, MAX, STEP
-	// 可选的选项: LABEL
+	// Slider requires DEFAULT/MIN/MAX/STEP. Choice requires DEFAULT and one or
+	// more OPTION declarations; mixing OPTION with MIN/MAX/STEP is invalid.
+	// LABEL and GROUP are optional in both forms.
 
-	std::bitset<5> processed;
+	std::bitset<6> processed;
 
 	std::string_view token;
 
@@ -487,7 +502,7 @@ static uint32_t ResolveParameter(std::string_view block, EffectDesc& desc) noexc
 			if (GetNextString(block, label)) {
 				return 1;
 			}
-			paramDesc.label = label;
+			paramDesc.label = DecodeLabelEscapes(label);
 		} else if (t == "MIN") {
 			if (processed[2]) {
 				return 1;
@@ -515,13 +530,48 @@ static uint32_t ResolveParameter(std::string_view block, EffectDesc& desc) noexc
 			if (GetNextString(block, stepValue)) {
 				return 1;
 			}
+		} else if (t == "GROUP") {
+			if (processed[5]) {
+				return 1;
+			}
+			processed[5] = true;
+
+			std::string_view group;
+			if (GetNextString(block, group)) {
+				return 1;
+			}
+			paramDesc.group = group;
+		} else if (t == "OPTION") {
+			std::string_view optionLine;
+			if (GetNextString(block, optionLine)) {
+				return 1;
+			}
+			int value = 0;
+			if (GetNextNumber(optionLine, value) || optionLine.empty() ||
+				!StrHelper::isspace(optionLine.front())) {
+				return 1;
+			}
+			StrHelper::Trim(optionLine);
+			if (optionLine.empty() || std::ranges::any_of(
+				paramDesc.choices,
+				[value](const EffectParameterChoice& choice) {
+					return choice.value == value;
+				})) {
+				return 1;
+			}
+			paramDesc.choices.push_back({
+				.value = value,
+				.label = DecodeLabelEscapes(optionLine)
+			});
 		} else {
 			Logger::Get().Warn(StrHelper::Concat("解析参数时遇到未知指令: ", t));
 		}
 	}
 
-	// 检查必选项
-	if (!processed[0] || !processed[2] || !processed[3] || !processed[4]) {
+	const bool isChoice = !paramDesc.choices.empty();
+	if (!processed[0] ||
+		(isChoice && (processed[2] || processed[3] || processed[4])) ||
+		(!isChoice && (!processed[2] || !processed[3] || !processed[4]))) {
 		return 1;
 	}
 
@@ -531,6 +581,9 @@ static uint32_t ResolveParameter(std::string_view block, EffectDesc& desc) noexc
 	}
 
 	if (token == "float") {
+		if (isChoice) {
+			return 1;
+		}
 		EffectConstant<float>& constant = paramDesc.constant.emplace<0>();
 
 		if (GetNextNumber(defaultValue, constant.defaultValue)) {
@@ -555,18 +608,25 @@ static uint32_t ResolveParameter(std::string_view block, EffectDesc& desc) noexc
 		if (GetNextNumber(defaultValue, constant.defaultValue)) {
 			return 1;
 		}
-		if (GetNextNumber(minValue, constant.minValue)) {
-			return 1;
-		}
-		if (GetNextNumber(maxValue, constant.maxValue)) {
-			return 1;
-		}
-		if (GetNextNumber(stepValue, constant.step)) {
-			return 1;
-		}
-
-		if (constant.defaultValue < constant.minValue || constant.maxValue < constant.defaultValue) {
-			return 1;
+		if (isChoice) {
+			if (std::ranges::find(
+				paramDesc.choices, constant.defaultValue,
+				&EffectParameterChoice::value) == paramDesc.choices.end()) {
+				return 1;
+			}
+			const auto [minimum, maximum] = std::ranges::minmax_element(
+				paramDesc.choices, {}, &EffectParameterChoice::value);
+			constant.minValue = minimum->value;
+			constant.maxValue = maximum->value;
+			constant.step = 0;
+		} else {
+			if (GetNextNumber(minValue, constant.minValue) ||
+				GetNextNumber(maxValue, constant.maxValue) ||
+				GetNextNumber(stepValue, constant.step) ||
+				constant.defaultValue < constant.minValue ||
+				constant.maxValue < constant.defaultValue) {
+				return 1;
+			}
 		}
 	} else {
 		return 1;
@@ -1563,6 +1623,13 @@ static uint32_t CompilePasses(
 			Logger::Get().Error(fmt::format("生成 Pass{} 失败", id + 1));
 			return;
 		}
+		macros.emplace_back("MP_HDR_SATURATE",
+			(flags & EffectCompilerFlags::HdrCompatibility) ? "saturate" : "");
+		macros.emplace_back("MP_HDR_ALPHA",
+			(flags & EffectCompilerFlags::HdrCompatibility) ? "sourceAlpha" : "1.0");
+		if (flags & EffectCompilerFlags::HdrCompatibility) {
+			macros.emplace_back("MP_HDR_COMPATIBILITY", "1");
+		}
 
 		if (flags & EffectCompilerFlags::SaveSources) {
 			std::wstring fileName = desc.passes.size() == 1
@@ -1790,6 +1857,19 @@ uint32_t EffectCompiler::Compile(
 			return 1;
 		}
 	}
+	// Route-aware primary surfaces must be applied before pass source
+	// generation. GeneratePassSource derives typed SRV/UAV declarations from
+	// these descriptors, so runtime route metadata and CSO contracts stay
+	// identical.
+	const auto applySurfaceFormat = [&](uint32_t shift, EffectIntermediateTextureDesc& surface) {
+		const uint32_t encoded = (flags >> shift) & EffectCompilerFlags::SurfaceFormatMask;
+		if (encoded == 0) return;
+		const uint32_t formatIndex = encoded - 1;
+		if (formatIndex < std::size(EffectHelper::FORMAT_DESCS) - 1)
+			surface.format = static_cast<EffectIntermediateTextureFormat>(formatIndex);
+	};
+	applySurfaceFormat(EffectCompilerFlags::InputFormatShift, desc.textures[0]);
+	applySurfaceFormat(EffectCompilerFlags::OutputFormatShift, desc.textures[1]);
 
 	if (!noCompile) {
 		desc.samplers.clear();

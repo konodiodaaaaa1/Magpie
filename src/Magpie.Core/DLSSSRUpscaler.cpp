@@ -42,7 +42,6 @@ void DLSSSRUpscaler::_Reset() noexcept {
 	_d3dDC = nullptr;
 	_resetHistory = true;
 	_settings = {};
-	_frameIndex = 0;
 	_lastGuidanceBinding = UINT8_MAX;
 	_lastGuidanceResetFrameId =
 		std::numeric_limits<FrameGuidanceFrameId>::max();
@@ -154,9 +153,7 @@ bool DLSSSRUpscaler::Initialize(
 		},
 		.InFeatureCreateFlags = uint32_t(
 			NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
-			NVSDK_NGX_DLSS_Feature_Flags_AutoExposure |
-			(_settings.useEstimatedDepth ?
-				NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0)),
+			NVSDK_NGX_DLSS_Feature_Flags_AutoExposure),
 		.InEnableOutputSubrects = false
 	};
 
@@ -170,21 +167,17 @@ bool DLSSSRUpscaler::Initialize(
 	_feature = feature;
 
 	Logger::Get().Info(fmt::format(
-		"DLSS SR_Experimental initialized (Balanced, preset J): {}x{} -> {}x{}, "
-		"requestedMotion={}, requestedDepth={}, jitter={}",
+		"DLSS SR initialized (Balanced, preset J): {}x{} -> {}x{}, "
+		"requestedMotion={} quality={}, depth=zero-contract",
 		inputDesc.Width, inputDesc.Height, outputDesc.Width, outputDesc.Height,
-		_settings.useMotionVectors, _settings.useEstimatedDepth,
-		_settings.enableJitter));
+		uint32_t(_settings.motionRequest.method), _settings.motionRequest.quality));
 	return true;
 }
 
 FrameGuidanceRequirements
 DLSSSRUpscaler::GetFrameGuidanceRequirements() const noexcept {
 	FrameGuidanceRequirements result{ .zero = true };
-	// Estimated depth uses motion internally for temporal reprojection even
-	// when the user chooses not to bind motion to DLSS SR.
-	result.motion = _settings.useMotionVectors || _settings.useEstimatedDepth;
-	result.depth = _settings.useEstimatedDepth;
+	result.Add(_settings.motionRequest);
 	return result;
 }
 
@@ -195,17 +188,6 @@ bool DLSSSRUpscaler::Resize(
 ) noexcept {
 	const DLSSSRSettings settings = _settings;
 	return Initialize(deviceResources, input, output, settings);
-}
-
-static float Halton(uint32_t index, uint32_t base) noexcept {
-	float result = 0.0f;
-	float fraction = 1.0f;
-	while (index) {
-		fraction /= (float)base;
-		result += fraction * (float)(index % base);
-		index /= base;
-	}
-	return result;
 }
 
 bool DLSSSRUpscaler::Draw(const NativeEffectDrawContext& context) noexcept {
@@ -222,7 +204,6 @@ bool DLSSSRUpscaler::Draw(const NativeEffectDrawContext& context) noexcept {
 	ID3D11Texture2D* depth = _zeroDepth.get();
 	bool guidanceReset = false;
 	bool realMotion = false;
-	bool realDepth = false;
 
 	D3D11_TEXTURE2D_DESC inputDesc{};
 	input->GetDesc(&inputDesc);
@@ -230,15 +211,12 @@ bool DLSSSRUpscaler::Draw(const NativeEffectDrawContext& context) noexcept {
 	const FrameGuidanceView guidance = SelectFrameGuidanceChannels(
 		context.frameGuidance, context.zeroFrameGuidance,
 		context.frameId, inputExtent,
-		_settings.useMotionVectors, _settings.useEstimatedDepth);
+		_settings.motionRequest.method != OpticalFlowMethod::None);
 	if (guidance.IsValidFor(context.frameId, inputExtent)) {
-		if (_settings.useMotionVectors) {
+		depth = guidance.depth.texture;
+		if (_settings.motionRequest.method != OpticalFlowMethod::None) {
 			motionVectors = guidance.motion.texture;
 			realMotion = !guidance.motion.metadata.isZero;
-		}
-		if (_settings.useEstimatedDepth) {
-			depth = guidance.depth.texture;
-			realDepth = !guidance.depth.metadata.isZero;
 		}
 		guidanceReset = guidance.requiresHistoryReset;
 		for (const FrameGuidanceResource* resource :
@@ -251,7 +229,6 @@ bool DLSSSRUpscaler::Draw(const NativeEffectDrawContext& context) noexcept {
 				motionVectors = _zeroMotionVectors.get();
 				depth = _zeroDepth.get();
 				realMotion = false;
-				realDepth = false;
 				guidanceReset = true;
 				break;
 			}
@@ -259,20 +236,17 @@ bool DLSSSRUpscaler::Draw(const NativeEffectDrawContext& context) noexcept {
 	}
 
 	const uint8_t binding = uint8_t(realMotion) |
-		(uint8_t(realDepth) << 1) |
-		(uint8_t(_settings.useMotionVectors) << 2) |
-		(uint8_t(_settings.useEstimatedDepth) << 3);
+		(uint8_t(_settings.motionRequest.method != OpticalFlowMethod::None) << 1);
 	const bool bindingChanged = _lastGuidanceBinding != UINT8_MAX &&
 		binding != _lastGuidanceBinding;
 	if (binding != _lastGuidanceBinding) {
 		Logger::Get().Info(fmt::format(
-			"DLSS SR guidance frameId={}: requested motion={} depth={}, "
-			"bound motion={} depth={}, fallback={}",
-			context.frameId, _settings.useMotionVectors,
-			_settings.useEstimatedDepth,
-			realMotion ? "real" : "zero", realDepth ? "real" : "zero",
-			(!realMotion && _settings.useMotionVectors) ||
-			(!realDepth && _settings.useEstimatedDepth) ? "zero" : "none"));
+			"DLSS SR guidance frameId={}: requested motion={}, "
+			"bound motion={} depth=zero, fallback={}",
+			context.frameId,
+			_settings.motionRequest.method != OpticalFlowMethod::None,
+			realMotion ? "real" : "zero",
+			(!realMotion && _settings.motionRequest.method != OpticalFlowMethod::None) ? "zero" : "none"));
 	}
 	guidanceReset = bindingChanged ||
 		(guidanceReset && _lastGuidanceResetFrameId != context.frameId);
@@ -292,23 +266,14 @@ bool DLSSSRUpscaler::Draw(const NativeEffectDrawContext& context) noexcept {
 	evalParams.pInDepth = depth;
 	evalParams.pInMotionVectors = motionVectors;
 	evalParams.pInBiasCurrentColorMask = _biasCurrentColorMask.get();
-	if (_settings.enableJitter) {
-		// An 8-sample Halton(2,3) sequence centered around zero. Since Magpie
-		// cannot jitter the source application's projection, this is deliberately
-		// exposed as a separate metadata-only experiment.
-		const uint32_t sample = (_frameIndex++ & 7u) + 1u;
-		evalParams.InJitterOffsetX = Halton(sample, 2) - 0.5f;
-		evalParams.InJitterOffsetY = Halton(sample, 3) - 0.5f;
-	} else {
-		evalParams.InJitterOffsetX = 0.0f;
-		evalParams.InJitterOffsetY = 0.0f;
-	}
+	evalParams.InJitterOffsetX = 0.0f;
+	evalParams.InJitterOffsetY = 0.0f;
 	evalParams.InRenderSubrectDimensions = { inputDesc.Width, inputDesc.Height };
 	evalParams.InReset = _resetHistory || guidanceReset ? 1 : 0;
 	evalParams.InMVScaleX = 1.0f;
 	evalParams.InMVScaleY = 1.0f;
-	evalParams.InPreExposure = 1.0f;
-	evalParams.InExposureScale = 1.0f;
+	evalParams.InPreExposure = _hdrProtocol.preExposure;
+	evalParams.InExposureScale = _hdrProtocol.exposure;
 
 	const NVSDK_NGX_Result result = NGX_D3D11_EVALUATE_DLSS_EXT(
 		_d3dDC,

@@ -5,6 +5,7 @@
 
 
 //!PARAMETER
+//!GROUP Gamma
 //!LABEL Target Gamma
 //!DEFAULT 2.2
 //!MIN 0.01
@@ -13,6 +14,7 @@
 float targetGamma;
 
 //!PARAMETER
+//!GROUP Gamma
 //!LABEL Monitor Gamma
 //!DEFAULT 2.2
 //!MIN 0.01
@@ -21,6 +23,7 @@ float targetGamma;
 float monitorGamma;
 
 //!PARAMETER
+//!GROUP Tone
 //!LABEL Saturation
 //!DEFAULT 1
 //!MIN 0
@@ -29,6 +32,7 @@ float monitorGamma;
 float saturation;
 
 //!PARAMETER
+//!GROUP Tone
 //!LABEL Luminance
 //!DEFAULT 1
 //!MIN 0
@@ -37,6 +41,7 @@ float saturation;
 float luminance;
 
 //!PARAMETER
+//!GROUP Tone
 //!LABEL Contrast
 //!DEFAULT 1
 //!MIN 0
@@ -45,6 +50,7 @@ float luminance;
 float contrast;
 
 //!PARAMETER
+//!GROUP Tone
 //!LABEL Brightness Boost
 //!DEFAULT 0
 //!MIN -1
@@ -53,6 +59,7 @@ float contrast;
 float brightBoost;
 
 //!PARAMETER
+//!GROUP Tone
 //!LABEL Black Level
 //!DEFAULT 0
 //!MIN -1
@@ -61,6 +68,7 @@ float brightBoost;
 float blackLevel;
 
 //!PARAMETER
+//!GROUP Channels
 //!LABEL Red Channel
 //!DEFAULT 1
 //!MIN 0
@@ -69,6 +77,7 @@ float blackLevel;
 float r;
 
 //!PARAMETER
+//!GROUP Channels
 //!LABEL Green Channel
 //!DEFAULT 1
 //!MIN 0
@@ -77,6 +86,7 @@ float r;
 float g;
 
 //!PARAMETER
+//!GROUP Channels
 //!LABEL Blue Channel
 //!DEFAULT 1
 //!MIN 0

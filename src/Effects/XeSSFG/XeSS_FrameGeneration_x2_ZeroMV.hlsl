@@ -4,7 +4,32 @@
 
 //!MAGPIE EFFECT
 //!VERSION 4
-//!SORT_NAME XeSS Frame Generation x2 Zero-MV (No Smooth Motion)
+//!SORT_NAME XeSS Frame Generation x2
+
+//!PARAMETER
+//!LABEL Optical Flow Method
+//!DEFAULT 0
+//!OPTION 0 None
+//!OPTION 1 AMDOF
+//!OPTION 2 NVOF
+int opticalFlowMethod;
+
+//!PARAMETER
+//!LABEL OF Quality
+//!DEFAULT 1
+//!OPTION 0 Performance
+//!OPTION 1 Quality
+int amdOpticalFlowMode;
+
+//!PARAMETER
+//!LABEL OF Quality
+//!DEFAULT 2
+//!OPTION 1 Performance
+//!OPTION 2 Balanced (Recommended)
+//!OPTION 3 Quality
+//!OPTION 4 High Quality (High Cost)
+//!OPTION 5 Highest Quality (Very High Cost)
+int nvidiaOpticalFlowQuality;
 
 //!TEXTURE
 Texture2D INPUT;

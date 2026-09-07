@@ -3,7 +3,7 @@
 
 //!MAGPIE EFFECT
 //!VERSION 4
-//!SORT_NAME DLSS FG_Experimental (No Smooth Motion)
+//!SORT_NAME DLSS FG_Experimental
 
 //!PARAMETER
 //!LABEL Frame Multiplier
@@ -11,23 +11,18 @@
 //!MIN 2
 //!MAX 4
 //!STEP 1
-float multiplier;
+int multiplier;
 
 //!PARAMETER
-//!LABEL Use Motion Vectors
-//!DEFAULT 1
-//!MIN 0
-//!MAX 1
-//!STEP 1
-float useMotionVectors;
-
-//!PARAMETER
-//!LABEL Use Estimated Depth (Experimental)
-//!DEFAULT 0
-//!MIN 0
-//!MAX 1
-//!STEP 1
-float useEstimatedDepth;
+//!LABEL OF Quality
+//!DEFAULT 2
+//!OPTION 0 None
+//!OPTION 1 Performance
+//!OPTION 2 Balanced (Recommended)
+//!OPTION 3 Quality
+//!OPTION 4 High Quality (High Cost)
+//!OPTION 5 Highest Quality (Very High Cost)
+int motionVectorQuality;
 
 //!TEXTURE
 Texture2D INPUT;

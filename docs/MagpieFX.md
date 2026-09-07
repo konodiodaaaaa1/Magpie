@@ -17,8 +17,11 @@ MagpieFX 基于 DirectX 11 计算着色器
 
 // 参数定义
 //!PARAMETER
-// LABEL 为用户界面上显示的参数名
+// LABEL 为用户界面上显示的参数名；字面量 \n 会显示为换行
 //!LABEL Sharpness
+// GROUP 可选；相同的非空名称会把参数放入同一个界面列。列顺序由分组首次出现顺序决定，
+// GROUP 只影响界面布局
+//!GROUP Detail
 // DEFAULT、MIN、MAX 和 STEP 都必须存在
 //!DEFAULT 0.1
 //!MIN 0.01
@@ -135,6 +138,14 @@ void Pass2(uint2 blockStart, uint3 threadId) {
     OUTPUT[blockStart] = MF4(1,1,1,1);
 }
 ```
+
+### 参数分组
+
+`GROUP` 必须有非空名称，并且在每个 `PARAMETER` 块中最多出现一次。重复使用同一名称会复用
+该列，组内仍保持参数声明顺序。未写 `GROUP` 的参数属于无标题默认组；完全不使用 `GROUP`
+的效果维持原有单个 260 像素无标题列。默认组可以与命名组混用，各列按其首个参数出现
+的顺序排列。分组元数据不会改变参数名、参数值、常量布局或着色器编译结果。`LABEL`
+中的字面量 `\n` 会在界面显示时解码为换行，不会开始一条新的效果指令。
 
 ### 预定义函数
 

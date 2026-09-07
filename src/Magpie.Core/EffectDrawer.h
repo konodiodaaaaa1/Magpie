@@ -1,5 +1,8 @@
 #pragma once
 #include "EffectDesc.h"
+#include "HdrEffectBoundary.h"
+#include "HdrSurfaceAdapter.h"
+#include <utility>
 #include "SmallVector.h"
 // Conan 的 muparser 不含 UNICODE 支持
 #pragma push_macro("_UNICODE")
@@ -35,6 +38,18 @@ public:
 
 	void Draw(EffectsProfiler& profiler) const noexcept;
 
+	void SetHdrBoundary(HdrEffectBoundaryContext context) noexcept { _hdrBoundary = std::move(context); }
+	const HdrEffectBoundaryContext& GetHdrBoundary() const noexcept { return _hdrBoundary; }
+	// The renderer may replace the canonical handoff texture after capture,
+	// resize, or an upstream effect rebuild. Keep the boundary source bound to
+	// the current production texture instead of a stale initialization pointer.
+	void SetHdrInputSource(ID3D11Texture2D* texture) noexcept { _hdrInputSource = texture; }
+	bool PrepareHdrInput() const noexcept;
+	bool CompleteHdrOutput() const noexcept;
+	ID3D11Texture2D* GetExternalOutputTexture() const noexcept {
+		return _hdrEnabled && _hdrOutput ? _hdrOutput.get() : _textures[1].get();
+	}
+
 	void DrawForExport(const EffectDesc& desc, uint32_t passIdx) const noexcept;
 
 	bool ResizeTextures(
@@ -44,12 +59,24 @@ public:
 		ID3D11Texture2D** inOutTexture
 	) noexcept;
 
+	bool UpdateParameters(
+		const EffectDesc& desc,
+		const EffectOption& option,
+		DeviceResources& deviceResources
+	) noexcept;
+
 	ID3D11Texture2D* GetOutputTexture() const noexcept {
 		return _textures[1].get();
 	}
 
 	ID3D11Texture2D* GetTexture(uint32_t idx) const noexcept {
 		return _textures[idx].get();
+	}
+
+	// Source-equivalent matrix tests use the exact production drawer and expose
+	// its actual canonical handoff rather than reimplementing effect formulas.
+	ID3D11Texture2D* GetCanonicalOutputTextureForTesting() const noexcept {
+		return GetExternalOutputTexture();
 	}
 
 private:
@@ -72,6 +99,10 @@ private:
 	void _PrepareForDraw() const noexcept;
 
 	void _DrawPass(uint32_t i) const noexcept;
+	bool _UsesDirectHdrPath() const noexcept;
+	DXGI_FORMAT _GetHdrInputFormat(const EffectDesc& desc) const noexcept;
+	DXGI_FORMAT _GetHdrOutputFormat(const EffectDesc& desc) const noexcept;
+	HdrTransformParameters _GetHdrTransformParameters() const noexcept;
 
 	SmallVector<uint32_t> _CalcPassesToDrawForExport(
 		const EffectDesc& desc,
@@ -92,6 +123,11 @@ private:
 	SmallVector<winrt::com_ptr<ID3D11ComputeShader>> _shaders;
 
 	SmallVector<std::pair<uint32_t, uint32_t>> _dispatches;
+	HdrEffectBoundaryContext _hdrBoundary{};
+	HdrSurfaceAdapter _hdrSurfaceAdapter;
+	winrt::com_ptr<ID3D11Texture2D> _hdrOutput;
+	ID3D11Texture2D* _hdrInputSource = nullptr;
+	bool _hdrEnabled = false;
 
 	static inline mu::Parser _exprParser;
 };

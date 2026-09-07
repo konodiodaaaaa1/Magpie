@@ -1,0 +1,1416 @@
+# Magpie 外置 HDR 效果层协议证据调研
+
+> 本文件只基于公开网络资料，不读取、引用或推断任何本地 Magpie 源码、效果描述、HLSL、配置、日志、二进制或历史实验文件。
+
+## 研究范围
+
+研究 25 个 Magpie 效果组和 2 个附加依赖项的公开图像输入/输出协议；未来架构外部交付面预设为 `DXGI_FORMAT_R16G16B16A16_FLOAT`，但本次不设计代码、不修改工程。
+
+## 排除项
+
+- 不读取/搜索/引用/分析本地 Magpie 源码、效果描述、HLSL、配置、日志、二进制、历史实验文件或本地仓库内容。
+- 不依据 Magpie 当前实现反推任何效果是否支持 FP16/HDR/R8/R10/NV12 等格式。
+- 排除已由本地实验单独验证的独立效果：不搜索、不写入矩阵、不计入效果数。
+- 不下载 SDK 压缩包、驱动安装包、完整仓库镜像、网页缓存、截图、网页转储或原始爬虫数据。
+
+## 证据等级
+
+- `OfficialDocs`：官方 SDK 文档/编程指南/API 参考
+- `OfficialHeader`：官方头文件
+- `OfficialSample`：官方示例
+- `OfficialRepository`：官方 GitHub 仓库
+- `OfficialForum`：厂商开发者论坛/官方发布说明/官方博客
+- `GitHubExperiment`：GitHub issue/fork/实验/社区结论
+- `无信息`：十轮内没有可靠协议结论
+
+## 十轮上限规则
+
+每个效果族最多 10 轮；一轮定义为一次新搜索查询或一个新来源的导航/查阅；重复搜索同一关键词或反复打开同一来源仍计轮。资料没有明确写出的字段一律记“未说明/无信息”。
+
+## 总览矩阵
+
+| 效果组 | 上游/SDK | 已证实输入格式 | 已证实输出格式 | HDR/FP16 状态 | 候选内部 profile | 证据等级 | 搜索轮数 | 核心格式边界 |
+|---|---|---|---|---|---|---|---|---|
+| Anime4K | Anime4K | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | OfficialRepository | 7 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=implementation_defined; alphaSemantics=未说明；不得从 mpv 用户着色器可编译推断 alpha 契约。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| CAS | FidelityFX Contrast Adaptive Sharpening (CAS) | DXGI_FORMAT_R8G8B8A8_UNORM(reference_implementation_only)；DXGI_FORMAT_R16G16B16A16_FLOAT(reference_implementation_only)；unspecified(not_enumerated) | DXGI_FORMAT_R8G8B8A8_UNORM(reference_implementation_only)；DXGI_FORMAT_R16G16B16A16_FLOAT(reference_implementation_only)；unspecified(not_enumerated) | Unspecified | SDRCompatible | OfficialDocs | 7 | inputFormatEnumeration=partial; outputFormatEnumeration=partial; inputOutputRelation=same_format_required; alphaSemantics=未说明；SDK 回调只读写 RGB，未见 alpha 透传/置 1 声明。; rangeBoundary=sRGB/linear 解释均支持；shader 转换注释按 [0,1] 线性空间处理。; hdrImplication=官方参考实现支持 R16G16B16A16_FLOAT 与 linear 开关，但这属于参考实现路径；SDK 技术文档未提供 H… |
+| CRT | 无信息（CRT 效果族未能在公开资料中唯一映射） | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | 无信息 | 1 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=unknown; alphaSemantics=未说明；名称不能唯一映射，无法建立 alpha 契约。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| CuNNy | CuNNy | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | OfficialRepository | 2 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=implementation_defined; alphaSemantics=未说明。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| CuNNy2 | 无信息（未能定位独立 CuNNy2 上游仓库/SDK） | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | 无信息 | 2 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=unknown; alphaSemantics=未说明。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| Diagnostics | 无信息（Diagnostics 是通用诊断效果名） | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | 无信息 | 1 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=unknown; alphaSemantics=未说明。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| DLSS | NVIDIA DLSS Super Resolution (DLSS-SR) | Color input: any supported buffer format for the API；Motion vectors: RG32_FLOAT or RG16_FLOAT；Depth: any one-channel format (R32_FLOAT/D32_FLOAT) or depth-stencil (D24S8)；Exposure: 1x1 texture, R16F preferred (presets J/… | Output buffer: any supported buffer format for the API；Previous output/history buffer: optional, RGBA16F | ExplicitHDR | DirectFP16 | OfficialDocs | 6 | 官方编程指南要求输入为 SRV/read 状态，输出为 UAV/write 状态；颜色输入任意 API 支持格式，输出任意 API 支持格式；历史输出建议 RGBA16F；最小输出 32x32；无规定最大分辨率但 8K 以上未保证。 |
+| DLSSFG | NVIDIA DLSS Frame Generation (DLSS-G / DLSS 4 Multi-Frame Gen) | Backbuffer/Final Color resource (format not enumerated in public text)；Motion vectors/depth: same DLSS-SR requirements | OutputInterpolated/OutputReal: same texture format as Backbuffer | ExplicitHDR | FormatOnlyNoColorContract | OfficialRepository | 5 | 官方头文件写明 Required Output Texture (same texture format as Backbuffer)；HUDless 与 UI 纹理需与 backbuffer 同尺寸/格式/色彩空间；backbuffer 资源经 Streamline swapchain 拦截。 |
+| FSR | AMD FidelityFX Super Resolution 1 (FSR1 spatial upscaler) | unspecified(inferred_from_shader_interface)；unspecified(not_enumerated) | unspecified(inferred_from_shader_interface)；unspecified(not_enumerated) | SDROnly | SDRCompatible | OfficialDocs | 6 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=implementation_defined; alphaSemantics=未说明。; rangeBoundary=[0,1] perceptual sRGB；RCAS 负输入会产生 NaN。; hdrImplication=FSR1 核心文档没有 HDR 直接输入路径；线性 HDR helper 属可选周边工具，不能算核心格式契约。 |
+| FSR2 | AMD FidelityFX Super Resolution 2 (FSR2 temporal upscaler) | Color buffer: APPLICATION SPECIFIED (render res)；Depth: APPLICATION SPECIFIED (1x FLOAT)；Motion vectors: APPLICATION SPECIFIED (2x FLOAT)；Reactive mask: R8_UNORM；Transparency & composition mask: R8_UNORM；Exposure: R32_FL… | Adjusted color buffer (internal): R16G16B16A16_FLOAT；Upscaled buffer (internal): R16G16B16A16_FLOAT；API 输出缓冲的公开格式在文档中未单独枚举，一般随应用分配资源 | ExplicitHDR | DirectFP16 | OfficialRepository | 4 | 颜色输入由应用指定格式；HDR 需设置 HDR flag；深度单浮点；MVs 2x float 屏幕空间范围 [<-w,-h>,<w,h>]；内部多使用 16-bit；输出最终与输入同域（内部 tonemap 会被反转）；要求 GPU 支持 typed UAV load 和 R16G16B16A16_UNORM。 |
+| FSR3 | AMD FidelityFX Super Resolution 3.1 Upscaler (FSR3 SR) | Color buffer: APPLICATION SPECIFIED；Depth: APPLICATION SPECIFIED (1x FLOAT)；Motion vectors: APPLICATION SPECIFIED (2x FLOAT)；Reactive mask: R8_UNORM；T&C mask: R8_UNORM；Exposure: R32_FLOAT | 未单独枚举；文档称输出与原始输入同域（internal tonemap 被反转） | ExplicitHDR | DirectFP16 | OfficialDocs | 2 | 与 FSR2 输入结构一致；HDR flag 开启时输入 linear；要求 R16G16B16A16_UNORM typed UAV 支持；API 未在文档中列 DXGI 输出枚举。 |
+| FSR3 | AMD FidelityFX Super Resolution 3 Frame Interpolation / Frame Generation (FSR3 FG) | currentBackBuffer (presentation color buffer)；currentBackBuffer_HUDLess (optional)；depth (required for FSR3 interpolation workflow)；motion vectors (required)；R16G16_SINT optical flow vector；R32_UINT optical flow SCD | interpolated output resource；outputSwapChainBuffer；格式未在公开文档列枚举；代码示例用 swap chain back buffer format | ExplicitHDR | BoundedHDR | OfficialDocs | 3 | 官方文档要求传入 backBufferFormat；HUD-less/UI 资源与 backbuffer 关系密切；帧生成需要超分先行；输入资源格式由配置描述，未列完整 DXGI 清单。 |
+| FSR4 | AMD FidelityFX Super Resolution 4 (FSR4 ML Super Resolution) | Color buffer: APPLICATION SPECIFIED；Depth: APPLICATION SPECIFIED (1x FLOAT)；Motion vectors: APPLICATION SPECIFIED (2x FLOAT)；Exposure: R32_FLOAT (1x1) | 未单独枚举；文档称输出与原始输入同域 | ExplicitHDR | DirectFP16 | OfficialDocs | 2 | 颜色输入必须 linear，除非设置 NON_LINEAR_COLORSPACE 标志；没有 DXGI 格式枚举，颜色格式由应用指定；MVs 2x float；深度 float；输出同输入域。 |
+| FSRCNNX | FSRCNNX (基于 FSRCNN 的 mpv/着色器变体) | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | GitHubExperiment | 5 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=implementation_defined; alphaSemantics=未说明。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| FXAA | FXAA (Fast Approximate Anti-Aliasing) | unspecified(not_enumerated)；unspecified(reference_implementation_only) | unspecified(not_enumerated)；unspecified(reference_implementation_only) | 无信息 | 无信息 | 无信息 | 4 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=implementation_defined; alphaSemantics=参考实现可透传 alpha；官方/原算法无统一声明。; rangeBoundary=unknown; hdrImplication=无官方 HDR 格式契约；个别引擎实现可用浮点纹理，但不能代表算法协议。 |
+| MLAA | MLAA (Morphological Anti-Aliasing) | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | 无信息 | 1 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=unknown; alphaSemantics=未说明。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| NIS | NVIDIA Image Scaling SDK (NVScaler/NVSharpen) | Input/output: non-integer data types, examples DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_NV12 (NV12 via NIS_NV12_SUPPORT)；HDR modes: LDR [0,1], HDR PQ [0,1], HDR Linear recommended [0,12.5] | Output UAV: non-integer formats, same docs examples (R8G8B8A8_UNORM/NV12); shader writes RWTexture2D<float4> | ExplicitHDR | DirectFP16 | OfficialRepository | 4 | 输入为 SRV/read state，输出 UAV/write；sampler 必须 linear clamp；支持 viewport 子区域；NV12 需编译开关 NIS_NV12_SUPPORT；系数纹理 R32G32B32A32_FLOAT 或 R16G16B16A16_FLOAT。 |
+| NNEDI3 | NNEDI3 | unspecified(inferred_from_shader_interface)；rgba16f / rgba16hf(inferred_from_shader_interface) | unspecified(not_enumerated)；rgba16f / rgba16hf(inferred_from_shader_interface) | FormatOnlyNoColorContract | DirectFP16 | OfficialRepository | 2 | inputFormatEnumeration=partial; outputFormatEnumeration=partial; inputOutputRelation=implementation_defined; alphaSemantics=未说明。; rangeBoundary=luma only / unknown; hdrImplication=rgba16f 只证明 mpv user shader 中间表面，不构成 HDR API 契约。 |
+| Pixel Art | 无信息（Pixel Art 泛指像素画放大算法族） | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | 无信息 | 1 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=unknown; alphaSemantics=未说明。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| RAVU | RAVU (Rapid and Accurate Video Upscaling) | mpv user-shader internal rgba16f/rgba16hf；ravu-yuv assumes YUV video after planes merged；ravu-rgb operates on RGB after planes merged | 内部 rgba16f/rgba16hf 表面 | FormatOnlyNoColorContract | DirectFP16 | OfficialRepository | 2 | 作为 mpv user shader 使用；gather/compute 版本分别用 textureGather/compute；d3d11 老驱动可用 rgba16hf 分支；ravu/ravu-lite 仅放大 luma 平面；ravu-yuv 需 YUV，ravu-rgb 需 RGB；ravu-zoom 任意比例。 |
+| RTXVideo | NVIDIA RTX Video Super Resolution (VFX SDK VSR filter) | GPU buffers in BGRA or RGBA interleaved format, 8-bit unsigned per component | Same BGRA or RGBA interleaved U8 GPU buffer | SDROnly | SDRCompatible | OfficialDocs | 3 | 输入输出必须 GPU buffer，BGRA/RGBA interleaved，每分量 8-bit unsigned；Denoise/Deblur modes 输出分辨率必须与输入相同；VSR 支持不同 modes；建议最小 360p。 |
+| RTXVideo | NVIDIA RTX Video Denoiser (VFX SDK VSR Denoise modes) | BGRA or RGBA interleaved U8 GPU buffers | BGRA or RGBA interleaved U8 GPU buffers, same resolution as input | SDROnly | SDRCompatible | OfficialDocs | 2 | Denoise modes 不支持 upscaling，输出分辨率必须等于输入；输入输出同为 BGRA/RGBA U8。 |
+| RTXVideo | NVIDIA RTX Video HDR | unspecified(not_enumerated) | unspecified(not_enumerated) | ExplicitHDR | 无信息 | OfficialForum | 5 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=unknown; alphaSemantics=未说明。; rangeBoundary=SDR input -> HDR10 output 的产品语义；无量值范围。; hdrImplication=产品方向明确为 SDR->HDR，但无公开 HDR/FP16 格式契约。 |
+| Sharpen | 无信息（Sharpen 为通用锐化效果族） | unspecified(not_enumerated) | unspecified(not_enumerated) | 无信息 | 无信息 | 无信息 | 1 | inputFormatEnumeration=not_enumerated; outputFormatEnumeration=not_enumerated; inputOutputRelation=unknown; alphaSemantics=未说明。; rangeBoundary=unknown; hdrImplication=无公开 HDR 格式契约。 |
+| SMAA | SMAA (Subpixel Morphological Antialiasing) | colorTex: RGBA texture (2D color/luma input)；edgesTex/areaTex/searchTex 等内部/预计算纹理；depthTex for depth edge detection | colorTex/blended output 4-channel color buffer | Unspecified | SDRCompatible | OfficialRepository | 4 | 官方集成说明要求两个 RGBA 时域 render target；创建后清除 alpha；所有 sampler linear + clamp；纹理读写默认非 sRGB，只有最终 NeighborhoodBlending 的 input/output 可 sRGB；64-bit 输入在 GCN 上有半速率线性过滤。 |
+| xBRZ | xBRZ (pixel-art scaling algorithm) | RGBA pixel data in Uint8ClampedArray (TypeScript port) | RGBA pixel data in Uint8ClampedArray | SDROnly | SDRCompatible | GitHubExperiment | 3 | TypeScript 移植接口为源/目标 RGBA 像素缓冲；缩放因子 2-6；支持 alpha 透明；非原生 SDK 协议。 |
+| XeSS | Intel XeSS Super Resolution (XeSS-SR) | R16G16B16A16_FLOAT；R11G11B10_FLOAT；R8G8B8A8_UNORM；其他 any linear color format; only UNORM integer color formats allowed；Motion vectors: R16G16_FLOAT；Depth: any depth format such as D32_FLOAT or D24_UNORM | Same format and color space as input (2D output texture) | ExplicitHDR | DirectFP16 | OfficialRepository | 5 | 输入颜色可为 LDR/HDR 任意 linear 格式；整数格式只允许 UNORM；输出必须与输入同格式同色彩空间，且输出 alpha 不保留并填 1.0；D3D12 输入 NON_PIXEL_SHADER_RESOURCE，输出 UAV；Vulkan 对应状态。 |
+| XeSSFG | Intel XeSS Frame Generation (XeSS-FG) | Back buffer/HUD-less/UI-only: R10G10B10A2_UNORM for HDR10/BT.2100 HDR display；Motion vectors: R16G16_FLOAT or similar；Depth: any depth format such as D32_FLOAT or D24_UNORM；UI Alpha: single channel; UI Color and Alpha: s… | Interpolated frames output to proxy swap chain; same back buffer pixel format (HDR10 R10G10B10A2_UNORM documented) | ExplicitHDR | BoundedHDR | OfficialRepository | 4 | HDR display 支持 R10G10B10A2_UNORM + HDR10/BT.2100；明确不支持 FP16 HDR/scRGB；back buffer, HUD-less, UI-only 必须同像素格式、色彩空间、尺寸；MV 与 depth buffer 尺寸一致。 |
+| NVIDIA Optical Flow | NVIDIA Optical Flow SDK (NvOF) | NV_OF_BUFFER_FORMAT_GRAYSCALE8；NV_OF_BUFFER_FORMAT_NV12；NV_OF_BUFFER_FORMAT_ABGR8 (A8B8G8R8) | NV_OF_FLOW_VECTOR (SHORT2, S10.5 flowx/flowy)；NV_OF_STEREO_DISPARITY (for stereo mode)；Cost buffer NV_OF_BUFFER_FORMAT_UINT or UINT8 | SDROnly | SDRCompatible | OfficialHeader | 4 | 输入帧支持 GRAYSCALE8/NV12/ABGR8；输出/提示为 SHORT2（S10.5）；外部提示/成本格式另有要求；支持 output grid size 1/2/4；有宽高 min/max caps。 |
+| AMD FidelityFX Optical Flow | FidelityFX Optical Flow | color input resource (格式未在文档枚举) | opticalFlowVector: R16G16_SINT；opticalFlowSCD: R32_UINT (3x1 scene change detection) | ExplicitHDR | BoundedHDR | OfficialDocs | 3 | 以 8x8 block 计算，输出纹理尺寸由 (displaySize+block-1)/8 决定；block size 固定 8；color 输入经 transfer function/luminance 转换。 |
+
+## 分条目证据
+
+### 1. Anime4K — Anime4K
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：公开仓库名称与效果组名一致，且为 Anime4K 官方/上游仓库。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://github.com/bloc97/Anime4K/blob/master/README.md
+    **notes**：Anime4K 官方仓库未枚举输入纹理格式；作为 mpv/libplacebo 用户着色器分发，实际纹理格式由宿主渲染器提供。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://github.com/bloc97/Anime4K/blob/master/README.md
+    **notes**：输出为目标/上采样后纹理；官方仓库未枚举像素格式。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：implementation_defined
+- **alphaSemantics**：未说明；不得从 mpv 用户着色器可编译推断 alpha 契约。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：尺寸缩放/着色器 hook 点由 mpv/libplacebo 宿主决定；官方未提供 UAV/SRV 或 API 资源状态要求。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：十轮内未找到可核实协议，无法给出候选 profile。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：A/B 模式等 GLSL 说明中的品质选择（未提供协议级格式语义）
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://github.com/bloc97/Anime4K/blob/master/README.md | 标题: Anime4K README | 等级: OfficialRepository | claim: 项目为 Anime4K 官方仓库，未写明 HDR/纹理格式协议 | quoteOrSymbol: The simplicity and speed of Anime4K allows the user to watch upscaled anime in real time | searchRound: 1
+  - URL: https://raw.githubusercontent.com/bloc97/Anime4K/v4.0.1/GLSL_Instructions.md | 标题: Anime4K v4.0.1 GLSL Instructions | 等级: OfficialRepository | claim: 只说明 mpv/GLSL 用法与模式，未说明纹理格式、数值范围、HDR | quoteOrSymbol: Mode A... | searchRound: 2
+- **searchRoundsUsed**：7
+- **unresolvedQuestions**：输入/输出纹理格式；数值范围；色彩空间；alpha；HDR/FP16 能力
+- **conclusion**：Anime4K 可明确映射到同名公开仓库，但公开仓库未提供图像 I/O 协议细节，本次记录为无协议信息。
+
+### 2. CAS — FidelityFX Contrast Adaptive Sharpening (CAS)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：AMD FidelityFX SDK 的 CAS 技术，官方名称一致。
+- **documentedInputFormats**：
+  - **format**：DXGI_FORMAT_R8G8B8A8_UNORM
+    **apiOrContext**：DXGI / Direct3D 11 reference CLI
+    **channelOrder**：RGBA
+    **numericRepresentation**：UNORM
+    **acceptanceStatus**：reference_implementation_only
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-CAS/78c03cf5cbf086ddcc06f635cc4def85a68b22df/CasCmdLine/README.md
+    **notes**：官方 CasCmdLine 默认输入格式；sRGB 解释由开关决定。
+  - **format**：DXGI_FORMAT_R16G16B16A16_FLOAT
+    **apiOrContext**：DXGI / Direct3D 11 reference CLI
+    **channelOrder**：RGBA
+    **numericRepresentation**：FLOAT (16-bit)
+    **acceptanceStatus**：reference_implementation_only
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-CAS/78c03cf5cbf086ddcc06f635cc4def85a68b22df/CasCmdLine/README.md
+    **notes**：官方 CasCmdLine --16bit 使用的格式；shader 另有 FP16/FP32 数学路径。
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.1.0/docs/techniques/contrast-adaptive-sharpening.md
+    **notes**：SDK 技术文档未对 FfxResource 输入格式做 DXGI/Vulkan 枚举。
+- **documentedOutputFormats**：
+  - **format**：DXGI_FORMAT_R8G8B8A8_UNORM
+    **apiOrContext**：DXGI / Direct3D 11 reference CLI
+    **channelOrder**：RGBA
+    **numericRepresentation**：UNORM
+    **acceptanceStatus**：reference_implementation_only
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-CAS/78c03cf5cbf086ddcc06f635cc4def85a68b22df/CasCmdLine/README.md
+    **notes**：默认输出格式，与输入同格式；官方样例说明输出可为相同或更大尺寸。
+  - **format**：DXGI_FORMAT_R16G16B16A16_FLOAT
+    **apiOrContext**：DXGI / Direct3D 11 reference CLI
+    **channelOrder**：RGBA
+    **numericRepresentation**：FLOAT (16-bit)
+    **acceptanceStatus**：reference_implementation_only
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-CAS/78c03cf5cbf086ddcc06f635cc4def85a68b22df/CasCmdLine/README.md
+    **notes**：--16bit 输出格式；官方文档保证输出与输入同色彩空间。
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.1.0/docs/techniques/contrast-adaptive-sharpening.md
+    **notes**：SDK 的 FfxResource output 未在技术文档中列出具体格式枚举。
+- **formatBoundary**：
+- **inputFormatEnumeration**：partial
+- **outputFormatEnumeration**：partial
+- **inputOutputRelation**：same_format_required
+- **alphaSemantics**：未说明；SDK 回调只读写 RGB，未见 alpha 透传/置 1 声明。
+- **rangeBoundary**：sRGB/linear 解释均支持；shader 转换注释按 [0,1] 线性空间处理。
+- **transferBoundary**：linear input expected; output returned to same input color space via FfxCasColorSpaceConversion
+- **resourceConstraints**：官方样例支持 sharpen-only/sharpen+upscale；输入 SRV/read、输出 UAV/write 在 SDK 样例路径；格式枚举只来自 CasCmdLine 参考实现。
+- **hdrImplication**：官方参考实现支持 R16G16B16A16_FLOAT 与 linear 开关，但这属于参考实现路径；SDK 技术文档未提供 HDR 元数据契约。
+- **channelOrderAndAlpha**：回调只处理 RGB；文档未说明 alpha 是否透传或必须为 1。
+- **precisionAndRange**：回调存在 float32 与 float16 路径；色彩转换注释按 [0,1] 线性空间处理，文档未给出 8/10/16 位格式清单。
+- **transferFunction**：期望线性输入；通过 FfxCasColorSpaceConversion 支持 LINEAR、GAMMA20、GAMMA22、sRGB_OUTPUT、sRGB_INPUT_OUTPUT。
+- **primariesAndColorSpace**：未说明原色域。
+- **hdrSupport**：Unspecified
+- **hdrBoundary**：文档未说明 HDR 直接输入；只要求线性输入并保持输入输出同色彩空间。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：SDRCompatible
+- **profileRationale**：官方 shader 注释将输入转换描述为 0..1 线性空间，且没有任何 HDR/FP16 直接路径声明；保守记为 SDR 兼容。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：sharpening disabled；sharpening enabled, upsampling disabled；both sharpening and upsampling enabled
+- **documentedPerformanceNotes**：文档未比较 FP16/UNORM/HDR 路径成本。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.1.0/docs/techniques/contrast-adaptive-sharpening.md | 标题: FidelityFX Contrast Adaptive Sharpening 1.1 | 等级: OfficialDocs | claim: CAS 需要线性输入；可按输入空间转换并在输出还原 | quoteOrSymbol: CAS needs linear input color to perform correctly | searchRound: 1
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.1.0/sdk/include/FidelityFX/host/ffx_cas.h | 标题: ffx_cas.h | 等级: OfficialHeader | claim: FfxCasDispatchDescription 仅含 FfxResource color/output、renderSize、sharpness | quoteOrSymbol: FfxResource color; FfxResource output | searchRound: 2
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.1.0/sdk/include/FidelityFX/gpu/cas/ffx_cas_callbacks_hlsl.h | 标题: ffx_cas_callbacks_hlsl.h | 等级: OfficialHeader | claim: float32/float16 采样与颜色空间转换宏 | quoteOrSymbol: casInputHalf... between 0 and 1 | searchRound: 3
+  - URL: https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-CAS/78c03cf5cbf086ddcc06f635cc4def85a68b22df/CasCmdLine/README.md | 标题: FidelityFX-CAS CasCmdLine README | 等级: OfficialRepository | claim: 官方命令行参考实现默认 R8G8B8A8_UNORM，--16bit 用 R16G16B16A16_FLOAT | quoteOrSymbol: uses R8G8B8A8_UNORM ... uses R16G16B16A16_FLOAT | searchRound: 5
+- **searchRoundsUsed**：7
+- **unresolvedQuestions**：具体支持格式列表；alpha 契约；HDR 数值上限；primaries
+- **conclusion**：CAS 的官方协议只明确了线性输入、输入输出同空间、float/fp16 shader 回调与可选色彩空间转换；具体 DXGI 格式与 HDR 能力未被官方文档枚举。
+
+### 3. CRT — 无信息（CRT 效果族未能在公开资料中唯一映射）
+
+- **mappingConfidence**：无信息
+- **mappingNotes**：仅按通用名称“CRT”搜索；公开资料无法唯一对应某个上游算法/SDK，且不能借助 Magpie 源码确认。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：无公开唯一上游来源
+    **notes**：无法唯一映射上游；不得把通用 CRT 着色器格式写成该效果组已支持格式。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：无公开唯一上游来源
+    **notes**：无法唯一映射上游；输出格式未公开。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：unknown
+- **alphaSemantics**：未说明；名称不能唯一映射，无法建立 alpha 契约。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：未确认任何资源状态、缩放或采样限制。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：无信息
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - 无来源（无信息条目；已尝试来源类型与轮数列于条目尾部）
+- **searchRoundsUsed**：1
+- **unresolvedQuestions**：上游映射；输入格式；色彩空间；HDR/FP16
+- **conclusion**：“CRT”效果组无法在公开资料中唯一映射到上游算法或 SDK，十轮内无法取得可靠协议结论，记录为无信息。
+
+### 4. CuNNy — CuNNy
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：上游仓库 Blinue/CuNNy 名称与效果组一致，README 自述“supports exporting to an mpv shader”和“Magpie effect”。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/Blinue/CuNNy/master/README.md
+    **notes**：上游仓库只描述 mpv shader/Magpie effect，未给出纹理格式。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/Blinue/CuNNy/master/README.md
+    **notes**：输出为上采样图像，格式未枚举。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：implementation_defined
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：mpv shader 导出路径意味着由 mpv/libplacebo 管理 hook 纹理；无 API 资源约束。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：8x32/4x3 等模型尺寸（来自 README，无格式协议语义）
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/Blinue/CuNNy/master/README.md | 标题: CuNNy README | 等级: OfficialRepository | claim: 上游仓库描述 CuNNy 可导出 mpv shader/Magpie effect，未给出 I/O 格式 | quoteOrSymbol: Supports exporting to an mpv meme shader! | searchRound: 1
+- **searchRoundsUsed**：2
+- **unresolvedQuestions**：输入输出纹理格式；HDR/FP16；alpha；数值范围
+- **conclusion**：CuNNy 上游可明确映射，但公开仓库没有图像协议细节，无法确定格式边界。
+
+### 5. CuNNy2 — 无信息（未能定位独立 CuNNy2 上游仓库/SDK）
+
+- **mappingConfidence**：无信息
+- **mappingNotes**：公开搜索未找到与“CuNNy2”唯一对应的上游算法/模型/SDK 文档；现有结果多为 Magpie 版本页等，不可用于协议推断。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开搜索未发现独立 CuNNy2 上游
+    **notes**：无法唯一映射到独立上游；不存在可归属的格式协议。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开搜索未发现独立 CuNNy2 上游
+    **notes**：同上。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：unknown
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：无上游资源约束可记录。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：无信息
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - 无来源（无信息条目；已尝试来源类型与轮数列于条目尾部）
+- **searchRoundsUsed**：2
+- **unresolvedQuestions**：CuNNy2 上游映射；格式；HDR/FP16；alpha
+- **conclusion**：CuNNy2 未能在公开资料中唯一映射到上游算法或 SDK，记录为无信息。
+
+### 6. Diagnostics — 无信息（Diagnostics 是通用诊断效果名）
+
+- **mappingConfidence**：无信息
+- **mappingNotes**：公开资料中不存在可作为上游协议的“Diagnostics”图像算法/SDK；不依据 Magpie 实现推断。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开资料无对应上游算法
+    **notes**：Diagnostics 为通用诊断效果名，不存在公开算法/SDK 格式枚举。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开资料无对应上游算法
+    **notes**：同上。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：unknown
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：无资源约束可记录。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：无信息
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - 无来源（无信息条目；已尝试来源类型与轮数列于条目尾部）
+- **searchRoundsUsed**：1
+- **unresolvedQuestions**：上游映射；I/O 格式；HDR/FP16
+- **conclusion**：Diagnostics 无公开上游协议，记录为无信息。
+
+### 7. DLSS — NVIDIA DLSS Super Resolution (DLSS-SR)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：NVIDIA DLSS SDK / Streamline 中的 DLSS Super Resolution，公共品牌与效果组一致。
+- **documentedInputFormats**：
+Color input: any supported buffer format for the API
+Motion vectors: RG32_FLOAT or RG16_FLOAT
+Depth: any one-channel format (R32_FLOAT/D32_FLOAT) or depth-stencil (D24S8)
+Exposure: 1x1 texture, R16F preferred (presets J/K)
+- **documentedOutputFormats**：
+Output buffer: any supported buffer format for the API
+Previous output/history buffer: optional, RGBA16F
+- **formatBoundary**：
+官方编程指南要求输入为 SRV/read 状态，输出为 UAV/write 状态；颜色输入任意 API 支持格式，输出任意 API 支持格式；历史输出建议 RGBA16F；最小输出 32x32；无规定最大分辨率但 8K 以上未保证。
+- **channelOrderAndAlpha**：Streamline 默认只放大 RGB；alphaUpscalingEnabled 为实验性时可放大 alpha；官方 DLSS 指南未规定固定通道顺序。
+- **precisionAndRange**：LDR 模式颜色值必须 [0,1] 且为感知编码（如 sRGB），不能为线性；HDR 模式可处理线性高范围、无亮度上限，内部高精度。
+- **transferFunction**：LDR: sRGB/perceptual encoding; HDR: linear space (IsHDR flag).
+- **primariesAndColorSpace**：未说明 primaries；HDR 为线性场景/显示域未细分。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：HDR 输入需将 IsHDR 置 1；需要 exposure（1x1 texture，R16F 首选）供当前帧使用；无 tone mapping 要求；输出仍同输入线性域。
+- **requiredHdrMetadata**：exposure value (1x1 texture)
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：官方明确 HDR 线性路径、无亮度上限且历史/输出使用/推荐 RGBA16F；有直接的 HDR/FP16 证据。
+- **auxiliaryInputs**：depth；motion vectors；exposure；jitter；previous output/history (optional)
+- **auxiliaryInputFormatsAndSemantics**：Depth any one-channel/depth-stencil; MVs RG32_FLOAT or RG16_FLOAT in pixel screen-space, can be low-res or high-res/dilated; exposure 1x1, R16F preferred; jitter in [-0.5,0.5] pixels at render res.
+- **temporalOrFrameGenerationConstraints**：时域历史由 DLSS 内部维护，可选 previous output RGBA16F；reset/jump cut 语义见编程指南；动态分辨率需保持长宽比；mip bias 需要负偏移。
+- **documentedQualityOptions**：DLSS quality/balanced/performance/ultra-performance presets (公开质量档，格式不随档位变化)
+- **documentedPerformanceNotes**：官方说明 LDR 模式性能更优且内部量化到 8-bit；HDR 模式内部高精度。
+- **qualityPerformanceEvidence**：官方指南有 LDR 性能更优说明，但未给出格式路径基准表。
+- **sources**：
+  - URL: https://github.com/NVIDIA/DLSS/blob/main/doc/DLSS_Programming_Guide_Release.pdf | 标题: NVIDIA DLSS Super Resolution Programming Guide Release | 等级: OfficialDocs | claim: Supported Formats: color any API format; MV RG32_FLOAT/RG16_FLOAT; depth any one-channel/depth-stencil; output any API format; history RGBA16F | quoteOrSymbol: 3.3 Supported Formats | searchRound: 1
+  - URL: https://raw.githubusercontent.com/NVIDIA/DLSS/main/doc/DLSS_Programming_Guide_Release.pdf | 标题: DLSS Programming Guide PDF (raw) | 等级: OfficialDocs | claim: LDR [0,1] perceptual; HDR linear unbounded | quoteOrSymbol: DLSS can process color data stored as either LDR or HDR | searchRound: 2
+  - URL: https://raw.githubusercontent.com/NVIDIA-RTX/Streamline/main/docs/ProgrammingGuideDLSS.md | 标题: Streamline DLSS Super Resolution Integration | 等级: OfficialRepository | claim: DLSS-SR requires colorIn/colorOut/depth/mvec/exposure; colorBuffersHDR and alphaUpscalingEnabled options | quoteOrSymbol: dlssOptions.colorBuffersHDR = sl::Boolean::eTrue | searchRound: 3
+- **searchRoundsUsed**：6
+- **unresolvedQuestions**：具体 DXGI 支持清单（官方用“any API format”而非枚举）；primaries；输出 alpha 默认值
+- **conclusion**：DLSS-SR 官方协议清晰：颜色输入输出可为 API 任意支持格式，HDR 线性模式通过 IsHDR 开启，运动向量固定 RG32/RG16_FLOAT，深度为单通道/深度模板，历史推荐 RGBA16F。
+
+### 8. DLSSFG — NVIDIA DLSS Frame Generation (DLSS-G / DLSS 4 Multi-Frame Gen)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：Streamline/NVIDIA DLSS Frame Generation 官方文档与头文件。
+- **documentedInputFormats**：
+Backbuffer/Final Color resource (format not enumerated in public text)
+Motion vectors/depth: same DLSS-SR requirements
+- **documentedOutputFormats**：
+OutputInterpolated/OutputReal: same texture format as Backbuffer
+- **formatBoundary**：
+官方头文件写明 Required Output Texture (same texture format as Backbuffer)；HUDless 与 UI 纹理需与 backbuffer 同尺寸/格式/色彩空间；backbuffer 资源经 Streamline swapchain 拦截。
+- **channelOrderAndAlpha**：UI Alpha 为单通道 0..1；UI Color and Alpha 需预乘 alpha；HUDless 为无 UI 全场景颜色；alpha 参与 UI 合成。
+- **precisionAndRange**：未公开列举 8/16 位格式；只有 colorBuffersHDR 布尔标志表示 HDR。
+- **transferFunction**：未在公开文本中细分；HUDless 与 backbuffer 必须同色彩空间（含 tone mapping）。
+- **primariesAndColorSpace**：未说明 primaries。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：头文件有 full HDR 标志；未提供 PQ/HLG/scRGB 解码或 metadata 要求；应把与 backbuffer 相同色彩空间的帧交给帧生成。
+- **requiredHdrMetadata**：colorBuffersHDR flag；无公开 MaxCLL/MaxFALL/亮度要求
+- **candidateInternalProfile**：FormatOnlyNoColorContract
+- **profileRationale**：官方确认 HDR 布尔和“输出与 backbuffer 同格式”，但未公开 HDR 的具体格式/色彩空间契约；不能判定 DirectFP16。
+- **auxiliaryInputs**：depth；motion vectors；HUD-less color；UI alpha or UI color+alpha；bidirectional distortion field (optional)；backbuffer subrect
+- **auxiliaryInputFormatsAndSemantics**：Depth/mvec same as DLSS-SR; HUDless/UI must match backbuffer; UI alpha 0..1; UI RGB premultiplied; distortion field maps distorted final color to undistorted guide buffers.
+- **temporalOrFrameGenerationConstraints**：需要 dense motion vectors, depth, HUDless；插值输出与真实帧输出为同格式；帧生成要求 present 时资源仍有效；子矩形需 extent 匹配；UI 合成公式 Final.RGB = UI.RGB + (1-UI.Alpha)*HUDless.RGB。
+- **documentedQualityOptions**：插值帧数/模式等公开选项，未涉及格式
+- **documentedPerformanceNotes**：公开指南建议优先提供 UI Alpha 单通道以获得更好性能；无格式基准。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/NVIDIA-RTX/Streamline/main/docs/ProgrammingGuideDLSS_G.md | 标题: Streamline DLSS-G Programming Guide | 等级: OfficialRepository | claim: 列出深度、运动向量、HUDless、UI 输入与资源生命周期约束 | quoteOrSymbol: Hudless ... same color space and post-processing effects as color backbuffer | searchRound: 1
+  - URL: https://raw.githubusercontent.com/NVIDIA/DLSS/main/include/nvsdk_ngx_defs_dlssg.h | 标题: nvsdk_ngx_defs_dlssg.h | 等级: OfficialHeader | claim: Required Output Texture (same texture format as Backbuffer) | quoteOrSymbol: #define NVSDK_NGX_DLSSG_Parameter_BackbufferFormat "DLSSG.BackbufferFormat" | searchRound: 2
+- **searchRoundsUsed**：5
+- **unresolvedQuestions**：实际接受/输出的 DXGI 格式枚举；HDR PQ/HLG/scRGB 颜色契约；metadata
+- **conclusion**：DLSSFG 官方公开材料确认输入由 swapchain/backbuffer 决定、输出必须与 backbuffer 同格式，并有 HDR 布尔开关；没有公开更细的格式枚举或 PQ/scRGB 协议。
+
+### 9. FSR — AMD FidelityFX Super Resolution 1 (FSR1 spatial upscaler)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：Magpie 效果组“FSR”按公开产品命名对应 FSR1 的空间超分；FSR2/3/4 已单列。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：algorithmic reference implementation (shader callback)
+    **channelOrder**：RGB (3 channel)
+    **numericRepresentation**：FLOAT/half
+    **acceptanceStatus**：inferred_from_shader_interface
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-FSR/master/ffx-fsr/ffx_fsr1.h
+    **notes**：官方 ffx_fsr1.h 提供 RGB 输入回调；未给出具体 DXGI 格式。
+  - **format**：unspecified
+    **apiOrContext**：DXGI/Vulkan/API resource
+    **channelOrder**：RGB
+    **numericRepresentation**：UNORM/FLOAT
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.0.0/docs/techniques/super-resolution-spatial.md
+    **notes**：官方 FSR1 文档只要求 [0,1] perceptual sRGB，不枚举资源格式。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：algorithmic reference implementation (shader callback)
+    **channelOrder**：RGB (3 channel)
+    **numericRepresentation**：FLOAT/half
+    **acceptanceStatus**：inferred_from_shader_interface
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-FSR/master/ffx-fsr/ffx_fsr1.h
+    **notes**：EASU/RCAS 输出 RGB；最终输出表面格式由宿主分配。
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.0.0/docs/techniques/super-resolution-spatial.md
+    **notes**：输出格式未在 FSR1 文档中单独列枚举。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：implementation_defined
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：[0,1] perceptual sRGB；RCAS 负输入会产生 NaN。
+- **transferBoundary**：sRGB / perceptual（非 linear）；helper 另含 linear HDR {0 to FP16_MAX} 转换工具，但非核心输入契约。
+- **resourceConstraints**：shader 回调 gather4；输入资源可为动态分辨率 viewport；建议 32bpp 格式；无 UAV/SRV 官方枚举。
+- **hdrImplication**：FSR1 核心文档没有 HDR 直接输入路径；线性 HDR helper 属可选周边工具，不能算核心格式契约。
+- **channelOrderAndAlpha**：未说明 alpha。
+- **precisionAndRange**：颜色归一化 [0,1]；感知编码 sRGB。
+- **transferFunction**：sRGB / perceptual（不是线性）。
+- **primariesAndColorSpace**：未说明原色域（通常 sRGB，但资料未写 primaries）。
+- **hdrSupport**：SDROnly
+- **hdrBoundary**：官方文档面向 [0,1] sRGB 输入，未提供 HDR 线性/PQ/HLG 路径。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：SDRCompatible
+- **profileRationale**：官方明确要求 [0-1] perceptual sRGB、不能线性，未见 HDR 路径，故为 SDR 兼容。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：EASU+RCAS 组合/quality mode 由调用方决定（官方未给出档位枚举）
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/v1.0.0/docs/techniques/super-resolution-spatial.md | 标题: FidelityFX Super Resolution 1 (FSR1) | 等级: OfficialDocs | claim: Input normalized [0-1], perceptual sRGB not linear; negative RCAS input NaN | quoteOrSymbol: Image should be normalized to [0-1] and be in perceptual color space (sRGB, not linear) | searchRound: 1
+  - URL: https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-FSR/master/ffx-fsr/ffx_fsr1.h | 标题: FidelityFX-FSR ffx_fsr1.h | 等级: OfficialHeader | claim: FSR1 通过 RGB 输入回调读取颜色；建议 32bpp 性能格式；RCAS 输入范围 {0 to 1} | quoteOrSymbol: Color needs to be encoded as 3 channel [red, green, blue] | searchRound: 4
+- **searchRoundsUsed**：6
+- **unresolvedQuestions**：DXGI 格式清单；alpha；输出格式要求
+- **conclusion**：FSR1 官方资料可确认是 [0,1] sRGB 感知色彩输入的空间超分算法，没有 HDR/FP16 协议证据，候选为 SDRCompatible。
+
+### 10. FSR2 — AMD FidelityFX Super Resolution 2 (FSR2 temporal upscaler)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：官方文档标题为 AMD FidelityFX Super Resolution 2.3.x。
+- **documentedInputFormats**：
+Color buffer: APPLICATION SPECIFIED (render res)
+Depth: APPLICATION SPECIFIED (1x FLOAT)
+Motion vectors: APPLICATION SPECIFIED (2x FLOAT)
+Reactive mask: R8_UNORM
+Transparency & composition mask: R8_UNORM
+Exposure: R32_FLOAT (1x1)
+- **documentedOutputFormats**：
+Adjusted color buffer (internal): R16G16B16A16_FLOAT
+Upscaled buffer (internal): R16G16B16A16_FLOAT
+API 输出缓冲的公开格式在文档中未单独枚举，一般随应用分配资源
+- **formatBoundary**：
+颜色输入由应用指定格式；HDR 需设置 HDR flag；深度单浮点；MVs 2x float 屏幕空间范围 [<-w,-h>,<w,h>]；内部多使用 16-bit；输出最终与输入同域（内部 tonemap 会被反转）；要求 GPU 支持 typed UAV load 和 R16G16B16A16_UNORM。
+- **channelOrderAndAlpha**：内部 Adjusted color 使用 YCoCg 且 alpha 为 disocclusion mask；对外 alpha 契约未说明。
+- **precisionAndRange**：颜色可为应用指定的 UNORM/FLOAT 等；HDR 线性域；MVs 内部 16-bit；exposure R32_FLOAT。
+- **transferFunction**：HDR 模式要求 linear；SDK 后续也允许 non-linear 标志（见 FSR4/upscaler 文档）。
+- **primariesAndColorSpace**：未说明 primaries。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：设置 FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE 后输入应为 linear；输出恢复原输入域；需要 pre-exposure/exposure 语义。
+- **requiredHdrMetadata**：pre-exposure；exposure (R32_FLOAT) 或 auto-exposure
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：官方内部表面明确 R16G16B16A16_FLOAT、HDR 线性支持，且有 FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE 直接路径。
+- **auxiliaryInputs**：depth；motion vectors；reactive mask；transparency & composition mask；exposure；camera jitter；reset
+- **auxiliaryInputFormatsAndSemantics**：MVs in pixels screen-space, low-res/display-res flag; reactive/T&C mask R8_UNORM [0,1]; exposure R32_FLOAT optional; depth flags inverted/infinite.
+- **temporalOrFrameGenerationConstraints**：时域算法需要当前/上一帧数据与历史；所有 render-res 输入需 jitter（MV 例外）；camera jump cut 需 reset；FrameTimeDelta 输入。
+- **documentedQualityOptions**：quality/balanced/performance 等调用方档位（API 主要按 input/output 尺寸）
+- **documentedPerformanceNotes**：内部 MVs 使用 16-bit，高精度输入不会额外受益；官方要求 R16G16B16A16_UNORM 支持；无公开格式路径性能基准。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://github.com/GPUOpen-Effects/FidelityFX-FSR2/blob/master/README.md | 标题: FidelityFX-FSR2 README | 等级: OfficialRepository | claim: Input resource table and internal R16G16B16A16_FLOAT buffers | quoteOrSymbol: Upscaled buffer ... R16G16B16A16_FLOAT | searchRound: 1
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/main/Kits/FidelityFX/docs/techniques/super-resolution-temporal.md | 标题: FidelityFX Super Resolution 2.3.4 | 等级: OfficialDocs | claim: Input resources table, HDR support, linear color | quoteOrSymbol: High dynamic range images are supported... linear color space | searchRound: 2
+- **searchRoundsUsed**：4
+- **unresolvedQuestions**：对外输出 FfxResource 的格式枚举；alpha 对外行为；primaries
+- **conclusion**：FSR2 官方协议：颜色输入为应用指定格式，HDR 需 linear 输入与 HDR flag；辅助资源格式明确；内部浮点表面 R16G16B16A16_FLOAT。
+
+### 11. FSR3 — AMD FidelityFX Super Resolution 3.1 Upscaler (FSR3 SR)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：FSR3 效果组拆为“FSR3 Upscaler”与“FSR3 Frame Interpolation”两个后端；此处为官方 FSR3 3.1.x Upscaler。
+- **documentedInputFormats**：
+Color buffer: APPLICATION SPECIFIED
+Depth: APPLICATION SPECIFIED (1x FLOAT)
+Motion vectors: APPLICATION SPECIFIED (2x FLOAT)
+Reactive mask: R8_UNORM
+T&C mask: R8_UNORM
+Exposure: R32_FLOAT
+- **documentedOutputFormats**：
+未单独枚举；文档称输出与原始输入同域（internal tonemap 被反转）
+- **formatBoundary**：
+与 FSR2 输入结构一致；HDR flag 开启时输入 linear；要求 R16G16B16A16_UNORM typed UAV 支持；API 未在文档中列 DXGI 输出枚举。
+- **channelOrderAndAlpha**：对外 alpha 未说明。
+- **precisionAndRange**：颜色应用指定；HDR linear；MVs 2x float；内部 16-bit。
+- **transferFunction**：HDR linear；文档未给出额外非线性颜色自动转换。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：设置 FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE，线性输入，输出恢复原输入域；需要 exposure/pre-exposure。
+- **requiredHdrMetadata**：pre-exposure；exposure；auto-exposure flag 可选
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：官方 HDR 线性直接路径 + 内部浮点表面证据与 FSR2 同类。
+- **auxiliaryInputs**：depth；motion vectors；reactive mask；T&C mask；exposure；jitter；reset；frame time delta
+- **auxiliaryInputFormatsAndSemantics**：同 FSR2：depth float、MV 2x float、R8_UNORM masks、R32_FLOAT exposure。
+- **temporalOrFrameGenerationConstraints**：时域超分要求 jitter、reset、历史；FrameTimeDelta 输入。
+- **documentedQualityOptions**：FSR 质量/性能档由应用选择（未在格式文档中）
+- **documentedPerformanceNotes**：未找到可核实的格式路径性能结论。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/main/Kits/FidelityFX/docs/techniques/super-resolution-upscaler.md | 标题: AMD FidelityFX Super Resolution 3.1.5 Upscaler | 等级: OfficialDocs | claim: FSR3 Upscaler input resources and HDR linear support | quoteOrSymbol: FSR Super Resolution ... HDR support | searchRound: 1
+- **searchRoundsUsed**：2
+- **unresolvedQuestions**：输出格式枚举；alpha；primaries
+- **conclusion**：FSR3 Upscaler 与 FSR2 的输入/辅助资源/HDR linear 协议高度一致；公开文档未列外部输出格式枚举。
+
+### 12. FSR3 — AMD FidelityFX Super Resolution 3 Frame Interpolation / Frame Generation (FSR3 FG)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：FSR3 的帧生成/插值后端，官方技术名 FidelityFX Frame Interpolation；拆为独立子条目。
+- **documentedInputFormats**：
+currentBackBuffer (presentation color buffer)
+currentBackBuffer_HUDLess (optional)
+depth (required for FSR3 interpolation workflow)
+motion vectors (required)
+R16G16_SINT optical flow vector
+R32_UINT optical flow SCD
+- **documentedOutputFormats**：
+interpolated output resource
+outputSwapChainBuffer
+格式未在公开文档列枚举；代码示例用 swap chain back buffer format
+- **formatBoundary**：
+官方文档要求传入 backBufferFormat；HUD-less/UI 资源与 backbuffer 关系密切；帧生成需要超分先行；输入资源格式由配置描述，未列完整 DXGI 清单。
+- **channelOrderAndAlpha**：HUDLess/UI 合成涉及 alpha/UI 内容；具体 alpha 格式未完整说明。
+- **precisionAndRange**：未公开逐格式数值范围；有 FFX_FRAMEINTERPOLATION_ENABLE_HDR_COLOR_INPUT 与 minMaxLuminance。
+- **transferFunction**：config 含 backBufferTransferFunction 用于把插值源转换到 linear RGB；HDR 转换依赖 minMaxLuminance。
+- **primariesAndColorSpace**：未说明 primaries；backBufferTransferFunction 枚举存在。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：需设置 HDR_COLOR_INPUT；通过 backBufferTransferFunction 与 minMaxLuminance 把 HDR 颜色转到 linear RGB；未公开 MaxCLL/MaxFALL 字段。
+- **requiredHdrMetadata**：backBufferTransferFunction；minMaxLuminance[2]
+- **candidateInternalProfile**：BoundedHDR
+- **profileRationale**：官方明确 HDR 颜色输入需经 transfer function + min/max luminance 转换为线性 RGB，即有界/转换契约，而非直接 FP16 无 metadata 路径。
+- **auxiliaryInputs**：depth；game motion vectors；FidelityFX Optical Flow vectors；HUDLess color；UI/HUD handling (presentCallback or HUDLessColor)
+- **auxiliaryInputFormatsAndSemantics**：depth inverted/infinite flags; opticalFlowVector R16G16_SINT; opticalFlowSCD R32_UINT; HUDLess optional FfxResource.
+- **temporalOrFrameGenerationConstraints**：帧生成需要 previous/current frame、光流、深度、运动向量；presentCallback/HUDLess 用于 UI；重置、延迟、显示分辨率限制在 FSR3 集成指南。
+- **documentedQualityOptions**：FSR3 frame generation on/off, UI composition modes 等（无格式档位）
+- **documentedPerformanceNotes**：未找到可核实的格式路径性能结论。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/release-FSR3-3.0.3/docs/techniques/frame-interpolation.md | 标题: FidelityFX Frame Interpolation | 等级: OfficialDocs | claim: Config includes HDR flag, backBufferTransferFunction, minMaxLuminance; optical flow outputs | quoteOrSymbol: FFX_FRAMEINTERPOLATION_ENABLE_HDR_COLOR_INPUT | searchRound: 1
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/release-FSR3-3.0.3/docs/techniques/optical-flow.md | 标题: FidelityFX Optical Flow | 等级: OfficialDocs | claim: Optical flow vector R16G16_SINT, SCD R32_UINT | quoteOrSymbol: R16G16_SINT ... R32_UINT | searchRound: 2
+- **searchRoundsUsed**：3
+- **unresolvedQuestions**：具体 backbuffer 格式支持清单；HDR PQ/scRGB 细节；alpha 行为
+- **conclusion**：FSR3 Frame Generation 官方协议确认需要 backbuffer 格式、HDR 输入标志和 transfer/luminance 参数；外部格式仍由 swapchain/backbuffer 决定，未公开完整格式枚举。
+
+### 13. FSR4 — AMD FidelityFX Super Resolution 4 (FSR4 ML Super Resolution)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：官方 FidelityFX SDK 文档标题“AMD FSR Super Resolution 4”。
+- **documentedInputFormats**：
+Color buffer: APPLICATION SPECIFIED
+Depth: APPLICATION SPECIFIED (1x FLOAT)
+Motion vectors: APPLICATION SPECIFIED (2x FLOAT)
+Exposure: R32_FLOAT (1x1)
+- **documentedOutputFormats**：
+未单独枚举；文档称输出与原始输入同域
+- **formatBoundary**：
+颜色输入必须 linear，除非设置 NON_LINEAR_COLORSPACE 标志；没有 DXGI 格式枚举，颜色格式由应用指定；MVs 2x float；深度 float；输出同输入域。
+- **channelOrderAndAlpha**：未说明。
+- **precisionAndRange**：linear HDR/scene-linear 输入，或 non-linear 标志；内部 ML 处理；精度未公开。
+- **transferFunction**：linear（推荐）；非线性的可选标志。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：HDR 线性输入为推荐；输出恢复同输入域；需要 exposure/pre-exposure 管理；无 PQ/HLG 自动解码说明。
+- **requiredHdrMetadata**：pre-exposure；exposure R32_FLOAT；auto-exposure 可选
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：官方 HDR linear 直接路径、无色彩空间自动处理，说明有直接浮点/HDR 路径。
+- **auxiliaryInputs**：depth；motion vectors；exposure；jitter；reset
+- **auxiliaryInputFormatsAndSemantics**：同 FSR2/3 upscaler 协议；MVs 屏幕空间像素范围。
+- **temporalOrFrameGenerationConstraints**：时域 ML 超分需 jitter、reset、历史/帧时间；无公开帧生成。
+- **documentedQualityOptions**：FSR4 质量/性能档（未在格式文档中）
+- **documentedPerformanceNotes**：未找到可核实的格式路径性能结论。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/main/Kits/FidelityFX/docs/techniques/super-resolution-ml.md | 标题: AMD FSR Super Resolution 4 | 等级: OfficialDocs | claim: FSR4 input resources, HDR linear and non-linear colorspace flags | quoteOrSymbol: High dynamic range images are supported... linear color space | searchRound: 1
+- **searchRoundsUsed**：2
+- **unresolvedQuestions**：输出格式枚举；alpha；primaries；ML 模型输入张量格式
+- **conclusion**：FSR4 官方协议说明颜色输入为应用指定的 linear（或 non-linear 标志）HDR 可支持，辅助资源与 FSR2/3 一致；外部输出格式未公开。
+
+### 14. FSRCNNX — FSRCNNX (基于 FSRCNN 的 mpv/着色器变体)
+
+- **mappingConfidence**：推测映射
+- **mappingNotes**：公开上可找到 FSRCNN-TensorFlow 项目与 mpv FSRCNNX 发布物，但“FSRCNNX”本身没有独立官方 SDK 文档。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/igv/FSRCNN-TensorFlow/master/README.md
+    **notes**：FSRCNNX 无独立官方 SDK；基础 FSRCNN 仓库只说明 TensorFlow 模型，未给出 mpv shader 的纹理格式。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/igv/FSRCNN-TensorFlow/master/README.md
+    **notes**：同上；输出格式未枚举。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：implementation_defined
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：社区 mpv 发布物/模型尺寸存在，但无统一资源状态或尺寸约束文档。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：不同 FSRCNNX 模型/尺寸由社区发布（无协议级信息）
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/igv/FSRCNN-TensorFlow/master/README.md | 标题: FSRCNN-TensorFlow | 等级: GitHubExperiment | claim: 底层 FSRCNN TensorFlow 实现；README 提到增加 RGB 支持 | quoteOrSymbol: Add RGB support | searchRound: 1
+- **searchRoundsUsed**：5
+- **unresolvedQuestions**：FSRCNNX 独立仓库/头文件；输入输出格式；HDR/FP16
+- **conclusion**：FSRCNNX 只能推测映射到 FSRCNN 的着色器变体，公开协议资料不足，记录为无信息。
+
+### 15. FXAA — FXAA (Fast Approximate Anti-Aliasing)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：算法名称明确对应 Lottes 的 FXAA；公开实现众多，但无单一官方 SDK 协议文档。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：无官方统一来源
+    **notes**：FXAA 算法无单一 SDK；多引擎实现把输入绑定为 2D 颜色纹理。
+  - **format**：unspecified
+    **apiOrContext**：WebGPU/engine reference implementation (bevy FXAA)
+    **channelOrder**：RGBA
+    **numericRepresentation**：FLOAT (sampled as vec4<f32>)
+    **acceptanceStatus**：reference_implementation_only
+    **evidenceRef**：https://raw.githubusercontent.com/JMS55/bevy/236aa4e2fc93900b6ada7151b0d8e0567e6650f2/crates/bevy_core_pipeline/src/fxaa/fxaa.wgsl
+    **notes**：社区/引擎实现使用 texture_2d<f32> 采样并输出 alpha 透传；不代表 FXAA 通用格式契约。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：无官方统一来源
+    **notes**：FXAA 输出通常为同尺寸颜色纹理，但无统一格式枚举。
+  - **format**：unspecified
+    **apiOrContext**：WebGPU/engine reference implementation (bevy FXAA)
+    **channelOrder**：RGBA
+    **numericRepresentation**：FLOAT
+    **acceptanceStatus**：reference_implementation_only
+    **evidenceRef**：https://raw.githubusercontent.com/JMS55/bevy/236aa4e2fc93900b6ada7151b0d8e0567e6650f2/crates/bevy_core_pipeline/src/fxaa/fxaa.wgsl
+    **notes**：bevy 实现返回 vec4<f32>(finalColor, centerSample.a)，alpha 透传；仅参考实现。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：implementation_defined
+- **alphaSemantics**：参考实现可透传 alpha；官方/原算法无统一声明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：shader 输入输出通常同尺寸；无统一 UAV/SRV 契约。
+- **hdrImplication**：无官方 HDR 格式契约；个别引擎实现可用浮点纹理，但不能代表算法协议。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：没有可引用为统一协议的官方格式说明。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：FXAA quality presets 由各实现定义，未在本调研确认
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/JMS55/bevy/236aa4e2fc93900b6ada7151b0d8e0567e6650f2/crates/bevy_core_pipeline/src/fxaa/fxaa.wgsl | 标题: Bevy FXAA shader (NVIDIA FXAA 3.11 port) | 等级: GitHubExperiment | claim: bevy 实现以 texture_2d<f32> 读取颜色，输出 RGBA float 并透传 alpha | quoteOrSymbol: return vec4<f32>(finalColor, centerSample.a); | searchRound: 3
+- **searchRoundsUsed**：4
+- **unresolvedQuestions**：固定输入格式；HDR/FP16；色彩空间
+- **conclusion**：FXAA 可明确映射到 Lottes 的公开算法，但缺少可作为“外置效果层协议”的统一官方格式契约，记录为无信息。
+
+### 16. MLAA — MLAA (Morphological Anti-Aliasing)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：MLAA 为公开论文/算法名称；无单一 SDK 官方协议。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：无公开统一来源
+    **notes**：MLAA 是论文/算法族，无单一官方 SDK 格式枚举。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：无公开统一来源
+    **notes**：输出格式未枚举。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：unknown
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：无统一资源约束可记录。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：无信息
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - 无来源（无信息条目；已尝试来源类型与轮数列于条目尾部）
+- **searchRoundsUsed**：1
+- **unresolvedQuestions**：上游 SDK/实现；格式；HDR/FP16
+- **conclusion**：MLAA 可映射到公开形态抗锯齿算法，但未找到统一的图像 I/O 协议资料，记录为无信息。
+
+### 17. NIS — NVIDIA Image Scaling SDK (NVScaler/NVSharpen)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：NVIDIA Image Scaling SDK 官方仓库与 Streamline 插件。
+- **documentedInputFormats**：
+Input/output: non-integer data types, examples DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_NV12 (NV12 via NIS_NV12_SUPPORT)
+HDR modes: LDR [0,1], HDR PQ [0,1], HDR Linear recommended [0,12.5]
+- **documentedOutputFormats**：
+Output UAV: non-integer formats, same docs examples (R8G8B8A8_UNORM/NV12); shader writes RWTexture2D<float4>
+- **formatBoundary**：
+输入为 SRV/read state，输出 UAV/write；sampler 必须 linear clamp；支持 viewport 子区域；NV12 需编译开关 NIS_NV12_SUPPORT；系数纹理 R32G32B32A32_FLOAT 或 R16G16B16A16_FLOAT。
+- **channelOrderAndAlpha**：颜色 RGBA/BGRA 由纹理格式决定；NV12 为 Y plane + interleaved UV；alpha 行为未公开。
+- **precisionAndRange**：LDR/PQ [0,1]；HDR Linear [0,12.5] 约 1000nits；fp16/fp32 系数可选；不支持整数格式。
+- **transferFunction**：LDR: display-referred after OETF (sRGB/gamma); HDR PQ: Rec.2020 PQ OETF; HDR Linear: scene/display linear.
+- **primariesAndColorSpace**：PQ 模式说明 Rec.2020 PQ；HDR Linear 按 BT.709 luma 参考；其余未说明。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：需通过 NIS_HDR_MODE 选 NONE/LINEAR/PQ；PQ 输入应为 display-referred Rec.2020 PQ；线性 HDR 建议 [0,12.5]；没有额外 metadata 参数。
+- **requiredHdrMetadata**：NIS_HDR_MODE；无 MaxCLL/MaxFALL/pre-exposure 参数
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：官方支持 HDR Linear/PQ 模式，系数可 FP16，且对 HDR 范围有明确文档，属于直接 HDR 路径。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：空间算法，无时域/历史/帧生成约束。
+- **documentedQualityOptions**：NIS_HDR_MODE；NIS_NV12_SUPPORT；NIS_VIEWPORT_SUPPORT；NIS_CLAMP_OUTPUT
+- **documentedPerformanceNotes**：README 未比较各格式成本。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/NVIDIAGameWorks/NVIDIAImageScaling/main/README.md | 标题: NVIDIA Image Scaling SDK README | 等级: OfficialRepository | claim: Color spaces/ranges and supported texture formats | quoteOrSymbol: Input and output formats are expected... DXGI_FORMAT_R8G8B8A8_UNORM or DXGI_FORMAT_NV12 | searchRound: 1
+  - URL: https://raw.githubusercontent.com/NVIDIA-RTX/Streamline/main/docs/ProgrammingGuideNIS.md | 标题: Streamline NIS Programming Guide | 等级: OfficialRepository | claim: NIS Streamline integration uses colorIn/colorOut tags and hdrMode option | quoteOrSymbol: nisOptions.hdrMode = NISHDR::eNISHDRNone | searchRound: 2
+- **searchRoundsUsed**：4
+- **unresolvedQuestions**：NV12 是否同时作为输出格式；alpha 具体行为；PQ 输入是否 10-bit/12-bit
+- **conclusion**：NIS 官方协议明确支持 R8G8B8A8_UNORM 与 NV12 类非整数格式，支持 LDR/PQ/Linear 三种色彩范围，并有 HDR mode 开关。
+
+### 18. NNEDI3 — NNEDI3
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：NNEDI3 为公开神经网络倍线算法；Magpie 效果组对应实现可能是 bjin mpv-prescalers 中的 luma prescaler，但未依据 Magpie 源码确认。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：mpv user shader hook (luma plane)
+    **channelOrder**：luma
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：inferred_from_shader_interface
+    **evidenceRef**：https://raw.githubusercontent.com/bjin/mpv-prescalers/master/README.md
+    **notes**：bjin README 表示 nnedi3 只放大 YUV 的 luma plane；外部输入格式由 mpv 提供，未枚举。
+  - **format**：rgba16f / rgba16hf
+    **apiOrContext**：mpv user shader internal intermediate
+    **channelOrder**：RGBA
+    **numericRepresentation**：FLOAT (16-bit)
+    **acceptanceStatus**：inferred_from_shader_interface
+    **evidenceRef**：https://raw.githubusercontent.com/bjin/mpv-prescalers/master/README.md
+    **notes**：README 关于 rgba16f/rgba16hf 的说明属于 mpv 用户着色器环境中的中间表面，不是 NNEDI3 算法 SDK 契约。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：mpv user shader hook output
+    **channelOrder**：luma
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://raw.githubusercontent.com/bjin/mpv-prescalers/master/README.md
+    **notes**：输出为放大后的 luma 平面；无原生后端格式枚举。
+  - **format**：rgba16f / rgba16hf
+    **apiOrContext**：mpv user shader internal intermediate
+    **channelOrder**：RGBA
+    **numericRepresentation**：FLOAT (16-bit)
+    **acceptanceStatus**：inferred_from_shader_interface
+    **evidenceRef**：https://raw.githubusercontent.com/bjin/mpv-prescalers/master/README.md
+    **notes**：同输入条目说明，仅中间表面。
+- **formatBoundary**：
+- **inputFormatEnumeration**：partial
+- **outputFormatEnumeration**：partial
+- **inputOutputRelation**：implementation_defined
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：luma only / unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：luma-only 放大；chroma 由宿主 --cscale 处理；mpv 老 d3d11 驱动需要 rgba16hf 分支。
+- **hdrImplication**：rgba16f 只证明 mpv user shader 中间表面，不构成 HDR API 契约。
+- **channelOrderAndAlpha**：README 表示 nnedi3/ravu 只放大 YUV 的 luma 平面；RGB 变体另有 ravu-rgb。
+- **precisionAndRange**：rgba16f / rgba16hf（fp16）；来自 mpv user shader 内部格式。
+- **transferFunction**：未说明。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：FormatOnlyNoColorContract
+- **hdrBoundary**：mpv user shader 内部处理浮点，但 README 未提供 HDR/PQ/linear 契约；不能作为厂商 HDR 保证。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：仅有的明确格式证据是 mpv prescaler 使用 rgba16f/rgba16hf 内部表面；这是用户着色器路径而非官方 SDK 契约。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：nnedi3 的 neurons/window 在文件名中（bjin 仓库）
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/bjin/mpv-prescalers/master/README.md | 标题: bjin/mpv-prescalers README | 等级: OfficialRepository | claim: Shaders use rgba16f internal format; nnedi3/ravu are luma prescalers | quoteOrSymbol: Unrecognized/unavailable FORMAT name: rgba16f | searchRound: 1
+- **searchRoundsUsed**：2
+- **unresolvedQuestions**：独立 NNEDI3 原生后端的格式契约；HDR 颜色空间
+- **conclusion**：NNEDI3 的 mpv 用户着色器资料显示内部使用 rgba16f/rgba16hf 并只处理 luma；没有可作为 Magpie 外置后端协议的官方格式列表。
+
+### 19. Pixel Art — 无信息（Pixel Art 泛指像素画放大算法族）
+
+- **mappingConfidence**：无信息
+- **mappingNotes**：公开搜索出现 libretro pixel-art enhancement systems、xBRZ、Kopf-Lischinski 等多种算法，无法唯一确定 Magpie 对应后端。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开搜索仅见多种像素画算法
+    **notes**：无法唯一映射；不得把 xBRZ/Scale2x/Kopf-Lischinski 等某一算法格式写成该效果组已支持协议。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开搜索仅见多种像素画算法
+    **notes**：同上。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：unknown
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：无统一资源约束可记录。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：无信息
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - 无来源（无信息条目；已尝试来源类型与轮数列于条目尾部）
+- **searchRoundsUsed**：1
+- **unresolvedQuestions**：具体像素画算法映射；格式；HDR/FP16
+- **conclusion**：Pixel Art 组无法唯一映射到公开算法，记录为无信息。
+
+### 20. RAVU — RAVU (Rapid and Accurate Video Upscaling)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：公开仓库 bjin/mpv-prescalers 的 RAVU 系列。
+- **documentedInputFormats**：
+mpv user-shader internal rgba16f/rgba16hf
+ravu-yuv assumes YUV video after planes merged
+ravu-rgb operates on RGB after planes merged
+- **documentedOutputFormats**：
+内部 rgba16f/rgba16hf 表面
+- **formatBoundary**：
+作为 mpv user shader 使用；gather/compute 版本分别用 textureGather/compute；d3d11 老驱动可用 rgba16hf 分支；ravu/ravu-lite 仅放大 luma 平面；ravu-yuv 需 YUV，ravu-rgb 需 RGB；ravu-zoom 任意比例。
+- **channelOrderAndAlpha**：YUV 或 RGB 变体；未单独说明 alpha。
+- **precisionAndRange**：rgba16f/rgba16hf（16-bit float）；未说明数值范围上限。
+- **transferFunction**：未说明。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：FormatOnlyNoColorContract
+- **hdrBoundary**：内部 FP16 浮点表面不等于厂商 HDR/PQ 契约；README 未说明 HDR 线性/PQ。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：明确内部 rgba16f/rgba16hf，但无颜色/光域契约；只能作为格式级 FP16 证据。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：ravu-lite；ravu；ravu-zoom；-ar anti-ringing 变体
+- **documentedPerformanceNotes**：README 说明 gather 通常较快、compute 对 yuv/rgb 更快，但无数值基准。
+- **qualityPerformanceEvidence**：README 有定性速度说明，无可核实格式路径性能数据。
+- **sources**：
+  - URL: https://raw.githubusercontent.com/bjin/mpv-prescalers/master/README.md | 标题: bjin/mpv-prescalers README | 等级: OfficialRepository | claim: RAVU variants and rgba16f/rgba16hf formats | quoteOrSymbol: rgba16f ... rgba16hf | searchRound: 1
+- **searchRoundsUsed**：2
+- **unresolvedQuestions**：外部原生后端的格式协议；HDR/色彩空间
+- **conclusion**：RAVU 明确为 mpv 用户着色器族，公开资料显示内部使用 rgba16f/rgba16hf 且分 YUV/RGB 变体；缺少可作为外置 SDK 的完整协议。
+
+### 21. RTXVideo — NVIDIA RTX Video Super Resolution (VFX SDK VSR filter)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：RTX Video 效果组拆为 VSR、Denoiser、HDR；此条为 VFX SDK Video Super Resolution filter。
+- **documentedInputFormats**：
+GPU buffers in BGRA or RGBA interleaved format, 8-bit unsigned per component
+- **documentedOutputFormats**：
+Same BGRA or RGBA interleaved U8 GPU buffer
+- **formatBoundary**：
+输入输出必须 GPU buffer，BGRA/RGBA interleaved，每分量 8-bit unsigned；Denoise/Deblur modes 输出分辨率必须与输入相同；VSR 支持不同 modes；建议最小 360p。
+- **channelOrderAndAlpha**：BGRA 或 RGBA；alpha 分量在 U8 格式中未单独描述行为。
+- **precisionAndRange**：8-bit unsigned integer per component；仅 SDR 级像素格式。
+- **transferFunction**：未在页面说明（SDR 视频输入通常 YUV->RGB 转换在外部）。
+- **primariesAndColorSpace**：未说明；相关 SDK 页面提到颜色不对时交换 709/601（YUV 转换）。
+- **hdrSupport**：SDROnly
+- **hdrBoundary**：VFX VSR 页面只列 8-bit U8 BGRA/RGBA，无 HDR/PQ/FP16 路径。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：SDRCompatible
+- **profileRationale**：官方页面明确 U8 BGRA/RGBA 输入输出，没有 HDR/FP16。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：VSR 是视频时域增强；无帧生成/运动向量/深度输入；Denoise/Deblur 同分辨率。
+- **documentedQualityOptions**：VSR_Bicubic；VSR_Low；VSR_Medium；VSR_High；VSR_Ultra；HighBitrate_*；Denoise_*；Deblur_*
+- **documentedPerformanceNotes**：未找到可核实的格式路径性能结论。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://docs.nvidia.com/maxine/vfx/1.2.0.0/Filters/VideoSuperResolution.html | 标题: NVIDIA VFX SDK Video Super Resolution | 等级: OfficialDocs | claim: VSR input/output BGRA or RGBA U8; modes | quoteOrSymbol: The input and output of the VSR filter are GPU buffers in BGRA or RGBA interleaved format...8-bit unsigned integer | searchRound: 1
+- **searchRoundsUsed**：3
+- **unresolvedQuestions**：VSR 是否接受 NV12/P010 内部路径；HDR 版本协议
+- **conclusion**：RTX Video VSR 的 VFX SDK 官方页面协议为 BGRA/RGBA 8-bit U8 GPU buffer；没有 FP16/HDR 输入输出契约。
+
+### 22. RTXVideo — NVIDIA RTX Video Denoiser (VFX SDK VSR Denoise modes)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：VFX SDK VSR filter 内含 Denoise_Low/Medium/High/Ultra modes，作为 Denoiser 子条目。
+- **documentedInputFormats**：
+BGRA or RGBA interleaved U8 GPU buffers
+- **documentedOutputFormats**：
+BGRA or RGBA interleaved U8 GPU buffers, same resolution as input
+- **formatBoundary**：
+Denoise modes 不支持 upscaling，输出分辨率必须等于输入；输入输出同为 BGRA/RGBA U8。
+- **channelOrderAndAlpha**：BGRA/RGBA。
+- **precisionAndRange**：8-bit unsigned per component。
+- **transferFunction**：未说明。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：SDROnly
+- **hdrBoundary**：官方页面只有 U8 输入输出，无 HDR 路径。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：SDRCompatible
+- **profileRationale**：官方 VSR 页面把 Denoise modes 也限定为 BGRA/RGBA U8，无 HDR。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：Denoise 模式不放大，输出同输入分辨率；无光流/深度输入。
+- **documentedQualityOptions**：Denoise_Low；Denoise_Medium；Denoise_High；Denoise_Ultra
+- **documentedPerformanceNotes**：未找到可核实的格式路径性能结论。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://docs.nvidia.com/maxine/vfx/1.2.0.0/Filters/VideoSuperResolution.html | 标题: NVIDIA VFX SDK Video Super Resolution (Denoise modes) | 等级: OfficialDocs | claim: Denoise modes same BGRA/RGBA U8 and same output resolution | quoteOrSymbol: Denoise_Low ... resolution of the output must be the same as input | searchRound: 1
+- **searchRoundsUsed**：2
+- **unresolvedQuestions**：独立 Denoiser 模型格式；HDR
+- **conclusion**：RTX Video Denoiser 在官方 VFX 文档中与 VSR 共用 BGRA/RGBA U8、同分辨率输出协议，无 HDR/FP16。
+
+### 23. RTXVideo — NVIDIA RTX Video HDR
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：NVIDIA 官方博客/产品页将 RTX Video HDR 描述为 RTX Video SDK 功能；未检索到完整公开 API 协议页。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://developer.nvidia.com/blog/enhancing-low-resolution-sdr-video-with-the-nvidia-rtx-video-sdk/
+    **notes**：官方博客只说 SDR 视频转 HDR10 质量，未给出输入像素格式/API 上下文。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：https://developer.nvidia.com/blog/enhancing-low-resolution-sdr-video-with-the-nvidia-rtx-video-sdk/
+    **notes**：官方博客只说 HDR10 质量输出，未给出输出像素格式/API 上下文。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：unknown
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：SDR input -> HDR10 output 的产品语义；无量值范围。
+- **transferBoundary**：未公开（博客层面提到 HDR10/PQ，但没有 API 转换契约）。
+- **resourceConstraints**：无 API 资源状态、尺寸或颜色转换文档。
+- **hdrImplication**：产品方向明确为 SDR->HDR，但无公开 HDR/FP16 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：官方博客/介绍提到 HDR10/PQ 场景；公开协议页未给出转换细节。
+- **primariesAndColorSpace**：博客提到从 sRGB 扩展到 scRGB/HDR 色域（不同页面措辞不一致）；无正式协议。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：官方仅宣称 SDR->HDR，未公开输入/输出格式、metadata、tone mapping 或 pre-exposure 契约。
+- **requiredHdrMetadata**：未说明
+- **candidateInternalProfile**：无信息
+- **profileRationale**：没有可核实的输入输出协议来源。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无公开协议。
+- **documentedQualityOptions**：RTX Video HDR on/off 等产品级选项，不是 API 格式档位
+- **documentedPerformanceNotes**：未找到可核实的格式路径性能结论。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://developer.nvidia.com/blog/enhancing-low-resolution-sdr-video-with-the-nvidia-rtx-video-sdk/ | 标题: NVIDIA Technical Blog: RTX Video SDK | 等级: OfficialForum | claim: RTX Video HDR converts SDR video to HDR10 quality; VSR upscales | quoteOrSymbol: RTX Video HDR converts SDR video to HDR10 quality | searchRound: 1
+- **searchRoundsUsed**：5
+- **unresolvedQuestions**：API 输入输出格式；NvCVImage pixel format；PQ metadata；scRGB/HDR10 工作空间
+- **conclusion**：RTX Video HDR 有明确官方产品宣称但缺少公开 API 格式协议，记录为无格式信息、仅 HDR 方向明确。
+
+### 24. Sharpen — 无信息（Sharpen 为通用锐化效果族）
+
+- **mappingConfidence**：无信息
+- **mappingNotes**：公开搜索出现 NIS NVSharpen、Android SharpenFilter 等多个互不相同的后端，无法唯一对应。
+- **documentedInputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开搜索出现多个锐化实现
+    **notes**：无法唯一映射；不得把任一锐化实现的格式写成该效果组已支持协议。
+- **documentedOutputFormats**：
+  - **format**：unspecified
+    **apiOrContext**：公开资料未枚举
+    **channelOrder**：unspecified
+    **numericRepresentation**：unspecified
+    **acceptanceStatus**：not_enumerated
+    **evidenceRef**：公开搜索出现多个锐化实现
+    **notes**：同上。
+- **formatBoundary**：
+- **inputFormatEnumeration**：not_enumerated
+- **outputFormatEnumeration**：not_enumerated
+- **inputOutputRelation**：unknown
+- **alphaSemantics**：未说明。
+- **rangeBoundary**：unknown
+- **transferBoundary**：unspecified
+- **resourceConstraints**：无统一资源约束可记录。
+- **hdrImplication**：无公开 HDR 格式契约。
+- **channelOrderAndAlpha**：无信息
+- **precisionAndRange**：无信息
+- **transferFunction**：无信息
+- **primariesAndColorSpace**：无信息
+- **hdrSupport**：无信息
+- **hdrBoundary**：未说明
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：无信息
+- **profileRationale**：无信息
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：无信息
+- **documentedPerformanceNotes**：无信息
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - 无来源（无信息条目；已尝试来源类型与轮数列于条目尾部）
+- **searchRoundsUsed**：1
+- **unresolvedQuestions**：具体锐化算法映射；格式；HDR/FP16
+- **conclusion**：Sharpen 效果组无法唯一映射到上游算法，记录为无信息。
+
+### 25. SMAA — SMAA (Subpixel Morphological Antialiasing)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：官方 iryoku/smaa 仓库。
+- **documentedInputFormats**：
+colorTex: RGBA texture (2D color/luma input)
+edgesTex/areaTex/searchTex 等内部/预计算纹理
+depthTex for depth edge detection
+- **documentedOutputFormats**：
+colorTex/blended output 4-channel color buffer
+- **formatBoundary**：
+官方集成说明要求两个 RGBA 时域 render target；创建后清除 alpha；所有 sampler linear + clamp；纹理读写默认非 sRGB，只有最终 NeighborhoodBlending 的 input/output 可 sRGB；64-bit 输入在 GCN 上有半速率线性过滤。
+- **channelOrderAndAlpha**：RGBA；alpha 通道在中间步骤被用作速度/索引等；文档警告清除 alpha。
+- **precisionAndRange**：float4/float 通用；提到 64-bit 输入和 half-rate filtering，未给出 8/10/16 位清单。
+- **transferFunction**：建议在 gamma-corrected（非 sRGB 采样）空间做 luma/color edge detection；最终 blending pass 可处理 sRGB 读写。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：Unspecified
+- **hdrBoundary**：官方代码未声称 HDR；luma edge detection 注释要求 gamma-corrected colors，通常为 LDR 空间。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：SDRCompatible
+- **profileRationale**：官方集成注释围绕 gamma/sRGB 空间和 RGBA 临时目标，未见 HDR/线性 HDR 直接路径；保守记为 SDR 兼容。
+- **auxiliaryInputs**：velocityTex (temporal variant)；depthTex (depth edge detection)；areaTex/searchTex lookup textures；predicationTex optional
+- **auxiliaryInputFormatsAndSemantics**：area/search 为预计算 LUT；velocity 解码方式由 SMAA_DECODE_VELOCITY 定义；depth 可为深度纹理。
+- **temporalOrFrameGenerationConstraints**：SMAA 1x 无时域；temporal/supersampling 变体需要多子样本、previous/current color 和 velocity。
+- **documentedQualityOptions**：SMAA 1x/2x/T2x 等宏/预设由官方源码定义
+- **documentedPerformanceNotes**：官方注释提示 64-bit 输入半速率线性过滤，可用 point filtering 规避；未给完整性能基准。
+- **qualityPerformanceEvidence**：官方注释有格式相关性能提示，但没有格式路径性能基准。
+- **sources**：
+  - URL: https://raw.githubusercontent.com/iryoku/smaa/master/README.md | 标题: SMAA README | 等级: OfficialRepository | claim: SMAA official repo and integration pointer | quoteOrSymbol: Checkout the technical paper | searchRound: 1
+  - URL: https://raw.githubusercontent.com/iryoku/smaa/master/SMAA.hlsl | 标题: SMAA.hlsl | 等级: OfficialRepository | claim: Integration notes: RGBA render targets, sRGB rules, filtering | quoteOrSymbol: All texture reads and buffer writes must be non-sRGB... | searchRound: 2
+- **searchRoundsUsed**：4
+- **unresolvedQuestions**：具体 DXGI 格式支持；HDR 线性输入；alpha 对外值
+- **conclusion**：SMAA 官方仓库提供了着色器级协议：RGBA 输入输出、RGBA 临时目标、gamma/sRGB 空间建议；未公开现代 HDR/FP16 API 契约。
+
+### 26. xBRZ — xBRZ (pixel-art scaling algorithm)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：xBRZ 原算法由 Zenju 发布；本条目证据来自 TypeScript/WASM 移植 kayahr/xbrz。
+- **documentedInputFormats**：
+RGBA pixel data in Uint8ClampedArray (TypeScript port)
+- **documentedOutputFormats**：
+RGBA pixel data in Uint8ClampedArray
+- **formatBoundary**：
+TypeScript 移植接口为源/目标 RGBA 像素缓冲；缩放因子 2-6；支持 alpha 透明；非原生 SDK 协议。
+- **channelOrderAndAlpha**：RGBA；支持 alpha 透明。
+- **precisionAndRange**：8-bit per channel in Uint8ClampedArray（[0,255]）；无 HDR/浮点。
+- **transferFunction**：未说明。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：SDROnly
+- **hdrBoundary**：移植接口是 8-bit RGBA，无 HDR。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：SDRCompatible
+- **profileRationale**：证据显示 RGBA 8-bit 像素缓冲；无浮点/HDR 接口。
+- **auxiliaryInputs**：无信息
+- **auxiliaryInputFormatsAndSemantics**：无信息
+- **temporalOrFrameGenerationConstraints**：无信息
+- **documentedQualityOptions**：scale factors 2-6
+- **documentedPerformanceNotes**：未找到可核实的格式路径性能结论。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/kayahr/xbrz/master/README.md | 标题: kayahr/xbrz TypeScript/WASM port | 等级: GitHubExperiment | claim: Port uses RGBA Uint8ClampedArray and supports alpha | quoteOrSymbol: Source and target are RGBA pixel data in a Uint8ClampedArray | searchRound: 1
+- **searchRoundsUsed**：3
+- **unresolvedQuestions**：Magpie 原生后端是否使用该接口；原 C++ xBRZ 的格式契约；HDR
+- **conclusion**：xBRZ 映射明确，但可靠公开协议只有社区移植的 RGBA 8-bit 接口，原生后端协议未确认。
+
+### 27. XeSS — Intel XeSS Super Resolution (XeSS-SR)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：Intel xess 官方仓库与 Developer Guide。
+- **documentedInputFormats**：
+R16G16B16A16_FLOAT
+R11G11B10_FLOAT
+R8G8B8A8_UNORM
+其他 any linear color format; only UNORM integer color formats allowed
+Motion vectors: R16G16_FLOAT
+Depth: any depth format such as D32_FLOAT or D24_UNORM
+- **documentedOutputFormats**：
+Same format and color space as input (2D output texture)
+- **formatBoundary**：
+输入颜色可为 LDR/HDR 任意 linear 格式；整数格式只允许 UNORM；输出必须与输入同格式同色彩空间，且输出 alpha 不保留并填 1.0；D3D12 输入 NON_PIXEL_SHADER_RESOURCE，输出 UAV；Vulkan 对应状态。
+- **channelOrderAndAlpha**：RGBA/R11G11B10 等格式；XeSS-SR 不保留输出 alpha，填 1.0。
+- **precisionAndRange**：颜色为 scene-referred scRGB，1.0 为 80 nits SDR 白点，HDR 可 >1；LDR 输入需 XESS_INIT_FLAG_LDR_INPUT_COLOR；exposureScale 等。
+- **transferFunction**：任何 linear 色彩格式（LDR/HDR）；非 sRGB/PQ 编码直接输入。
+- **primariesAndColorSpace**：scRGB（scene-referred）；输出同输入色彩空间。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：推荐直接提供 HDR 线性/scRGB；可设置 exposureScale/pre-exposure/exposureMultiplier；算法内部自行 tonemap，输出恢复；LDR 也可。
+- **requiredHdrMetadata**：exposureScale；preExposure/exposureMultiplier 可选；无 MaxCLL/MaxFALL 要求
+- **candidateInternalProfile**：DirectFP16
+- **profileRationale**：官方明确支持 FP16/RGBA16F、scRGB HDR 线性并推荐 HDR 输入。
+- **auxiliaryInputs**：motion vectors；depth (low-res MV mode)；responsive pixel mask (optional)；exposure scale/multiplier；jitter
+- **auxiliaryInputFormatsAndSemantics**：MVs R16G16_FLOAT screen-space pixels, low-res default or high-res dilated; depth D32_FLOAT/D24_UNORM; responsive mask R channel float [0,1]; input states as above.
+- **temporalOrFrameGenerationConstraints**：时域超分：需 jittered color, motion vectors, depth when low-res; output target resolution; fixed/dynamic input resolution ranges; reset history on cuts.
+- **documentedQualityOptions**：Ultra Quality/Quality/Balanced/Performance presets (via optimal input resolution API)
+- **documentedPerformanceNotes**：开发指南建议 HDR input color 推荐、使用 FP16 color buffer in scene linear HDR（性能提示）；无格式路径基准。
+- **qualityPerformanceEvidence**：指南有使用 FP16 scene-linear HDR 的建议，但无定量比较。
+- **sources**：
+  - URL: https://raw.githubusercontent.com/intel/xess/main/doc/xess_sr_developer_guide_english.md | 标题: Intel XeSS-SR Developer Guide | 等级: OfficialRepository | claim: Formats and color space: R16G16B16A16_FLOAT/R11G11B10_FLOAT/R8G8B8A8_UNORM, scRGB, output same | quoteOrSymbol: XeSS-SR accepts both LDR and HDR input colors in any linear color format | searchRound: 1
+  - URL: https://raw.githubusercontent.com/intel/xess/main/README.md | 标题: Intel xess README | 等级: OfficialRepository | claim: XeSS-SR and XeSS-FG/XeLL availability | quoteOrSymbol: XeSS Super Resolution (XeSS-SR) | searchRound: 2
+- **searchRoundsUsed**：5
+- **unresolvedQuestions**：每种 DXGI/Vulkan 格式完整矩阵；PQ/HLG 是否需外部转换；primaries 非 scRGB
+- **conclusion**：XeSS-SR 官方协议非常明确：支持 R16G16B16A16_FLOAT/R11G11B10_FLOAT/R8G8B8A8_UNORM 等线性格式，scRGB scene-referred，输出同输入格式且 alpha 填 1。
+
+### 28. XeSSFG — Intel XeSS Frame Generation (XeSS-FG)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：Intel xess 官方仓库 XeSS-FG Developer Guide。
+- **documentedInputFormats**：
+Back buffer/HUD-less/UI-only: R10G10B10A2_UNORM for HDR10/BT.2100 HDR display
+Motion vectors: R16G16_FLOAT or similar
+Depth: any depth format such as D32_FLOAT or D24_UNORM
+UI Alpha: single channel; UI Color and Alpha: same backbuffer format
+- **documentedOutputFormats**：
+Interpolated frames output to proxy swap chain; same back buffer pixel format (HDR10 R10G10B10A2_UNORM documented)
+- **formatBoundary**：
+HDR display 支持 R10G10B10A2_UNORM + HDR10/BT.2100；明确不支持 FP16 HDR/scRGB；back buffer, HUD-less, UI-only 必须同像素格式、色彩空间、尺寸；MV 与 depth buffer 尺寸一致。
+- **channelOrderAndAlpha**：UI-only texture 有 alpha；非预乘 alpha 可用标志；合成公式 Final.RGB = UIonly.RGB + (1-UIonly.Alpha) * HUDlessColor.RGB；2-bit alpha 对 UI 合成不足。
+- **precisionAndRange**：HDR 显示为 10-bit R10G10B10A2_UNORM HDR10/BT.2100；不支持 FP16/scRGB；LDR 显示用 swapchain 格式。
+- **transferFunction**：HDR10 / BT.2100（PQ）用于 HDR 显示。
+- **primariesAndColorSpace**：HDR10 / BT.2100；非 HDR 未细说。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：HDR 必须使用 R10G10B10A2_UNORM 与 HDR10/BT.2100，back buffer/HUDless/UI 同格式；不支持 FP16/scRGB；未给出 PQ 解码细节。
+- **requiredHdrMetadata**：HDR display pixel format R10G10B10A2_UNORM；HDR10/BT.2100 color space；无 MaxCLL/MaxFALL 公开参数
+- **candidateInternalProfile**：BoundedHDR
+- **profileRationale**：官方明确 HDR 只走 10-bit R10G10B10A2 UNORM/HDR10 BT.2100，不接收 FP16/scRGB，故为有界 HDR 契约。
+- **auxiliaryInputs**：motion vectors；depth；HUD-less color；UI-only texture；jitter offset；resetHistory；motion vector scale
+- **auxiliaryInputFormatsAndSemantics**：MV R16G16_FLOAT/similar low/high res; depth any format, same size as MV; HUDless/UI same as backbuffer format/color; UI alpha single channel.
+- **temporalOrFrameGenerationConstraints**：需要 XeLL latency reduction 启用；不能独占全屏；40 FPS 最低/60 FPS 推荐；禁用/减少 motion blur；切换或与第三方帧生成不兼容；UI composition modes.
+- **documentedQualityOptions**：UI composition modes；interpolated frames count 等 XeSS-FG 公开选项
+- **documentedPerformanceNotes**：官方建议 low-res MVs 以免 high-res 大幅降低性能；无格式路径定量表。
+- **qualityPerformanceEvidence**：官方说明 high-res MV 性能影响，但无格式路径性能基准。
+- **sources**：
+  - URL: https://raw.githubusercontent.com/intel/xess/main/doc/xess_fg_developer_guide_english.md | 标题: Intel XeSS-FG Developer Guide | 等级: OfficialRepository | claim: HDR display support R10G10B10A2_UNORM HDR10/BT.2100; no FP16/scRGB | quoteOrSymbol: XeSS-FG provides support for HDR displays with the R10G10B10A2_UNORM pixel format... does not support FP16 HDR format and scRGB color space | searchRound: 1
+  - URL: https://raw.githubusercontent.com/intel/xess/main/README.md | 标题: Intel xess README | 等级: OfficialRepository | claim: XeSS-FG available on Intel Arc and non-Intel with SM6.4 | quoteOrSymbol: XeSS Frame Generation (XeSS-FG) | searchRound: 2
+- **searchRoundsUsed**：4
+- **unresolvedQuestions**：LDR 下的完整 swapchain 格式清单；PQ metadata 传递
+- **conclusion**：XeSS-FG 官方明确 HDR 契约：R10G10B10A2_UNORM/HDR10 BT.2100，不支持 FP16/scRGB；所有参与合成的纹理必须同格式同色彩空间。
+
+### 29. NVIDIA Optical Flow — NVIDIA Optical Flow SDK (NvOF)
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：附加依赖项对应 NVIDIA Optical Flow SDK NvOF API（另有 NVOFA 新 API，本次主条目为 NvOF 头文件证据）。
+- **documentedInputFormats**：
+NV_OF_BUFFER_FORMAT_GRAYSCALE8
+NV_OF_BUFFER_FORMAT_NV12
+NV_OF_BUFFER_FORMAT_ABGR8 (A8B8G8R8)
+- **documentedOutputFormats**：
+NV_OF_FLOW_VECTOR (SHORT2, S10.5 flowx/flowy)
+NV_OF_STEREO_DISPARITY (for stereo mode)
+Cost buffer NV_OF_BUFFER_FORMAT_UINT or UINT8
+- **formatBoundary**：
+输入帧支持 GRAYSCALE8/NV12/ABGR8；输出/提示为 SHORT2（S10.5）；外部提示/成本格式另有要求；支持 output grid size 1/2/4；有宽高 min/max caps。
+- **channelOrderAndAlpha**：ABGR8 为 8-bit packed A8B8G8R8；NV12 为 Y planar + interleaved UV。
+- **precisionAndRange**：8-bit input; output flow vector int16 S10.5 表示亚像素；无 HDR/PQ 声明。
+- **transferFunction**：未说明。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：SDROnly
+- **hdrBoundary**：官方头文件输入格式只列 8-bit 亮度/NV12/ABGR8，无 FP16/HDR。
+- **requiredHdrMetadata**：无信息
+- **candidateInternalProfile**：SDRCompatible
+- **profileRationale**：NvOF 头文件列出的输入只有 8-bit 格式，输出为定点光流。
+- **auxiliaryInputs**：externalHints (optional)；cost buffer (optional)；reference frame
+- **auxiliaryInputFormatsAndSemantics**：externalHints/outputBuffer use NV_OF_FLOW_VECTOR for optical flow; cost UINT or UINT8; reference frame same input format as inputFrame.
+- **temporalOrFrameGenerationConstraints**：光流在两帧（input/reference）间估计；output grid size 决定流向量网格；scene change/hints 等。
+- **documentedQualityOptions**：NV_OF_OUTPUT_VECTOR_GRID_SIZE 1/2/4
+- **documentedPerformanceNotes**：头文件注明 legacy 32-bit cost 不高效，建议 8-bit cost；无格式路径完整基准。
+- **qualityPerformanceEvidence**：官方头文件有成本格式性能建议，但无定量表。
+- **sources**：
+  - URL: https://raw.githubusercontent.com/NVIDIA/NVIDIAOpticalFlowSDK/master/nvOpticalFlowCommon.h | 标题: NVIDIA Optical Flow SDK nvOpticalFlowCommon.h | 等级: OfficialHeader | claim: Buffer formats: GRAYSCALE8, NV12, ABGR8; flow vector SHORT2 | quoteOrSymbol: NV_OF_BUFFER_FORMAT_NV12 ... NV_OF_BUFFER_FORMAT_ABGR8 | searchRound: 1
+- **searchRoundsUsed**：4
+- **unresolvedQuestions**：NVOFA 新 API 的 RGBA/F16 支持；HDR 帧是否需转为 NV12/ABGR8
+- **conclusion**：NVIDIA Optical Flow NvOF 官方头文件支持 8-bit GRAYSCALE/NV12/ABGR8 输入，输出为 S10.5 定点 SHORT2 光流；未提供 HDR/FP16 输入路径。
+
+### 30. AMD FidelityFX Optical Flow — FidelityFX Optical Flow
+
+- **mappingConfidence**：明确映射
+- **mappingNotes**：AMD FidelityFX SDK 中用于 FSR3 的光流技术，官方 docs/optical-flow.md。
+- **documentedInputFormats**：
+color input resource (格式未在文档枚举)
+- **documentedOutputFormats**：
+opticalFlowVector: R16G16_SINT
+opticalFlowSCD: R32_UINT (3x1 scene change detection)
+- **formatBoundary**：
+以 8x8 block 计算，输出纹理尺寸由 (displaySize+block-1)/8 决定；block size 固定 8；color 输入经 transfer function/luminance 转换。
+- **channelOrderAndAlpha**：未说明 color 通道顺序；算法使用亮度。
+- **precisionAndRange**：输出 R16G16_SINT；SCD R32_UINT；输入颜色格式未枚举。
+- **transferFunction**：输入有 backbufferTransferFunction 与 minMaxLuminance，用于 HDR 管道转换到 luminance。
+- **primariesAndColorSpace**：未说明。
+- **hdrSupport**：ExplicitHDR
+- **hdrBoundary**：支持 HDR pipeline 的 luminance 转换：需 backbufferTransferFunction 和 minMaxLuminance；未公开颜色输入格式。
+- **requiredHdrMetadata**：backbufferTransferFunction；minMaxLuminance
+- **candidateInternalProfile**：BoundedHDR
+- **profileRationale**：官方要求把 HDR 颜色经 transfer/luminance 转成内部亮度，适合有界转换路径。
+- **auxiliaryInputs**：previous/current color input；internal history resources for pyramid/histogram
+- **auxiliaryInputFormatsAndSemantics**：color input is current frame; internal history resources; SCD output 3x1 R32_UINT.
+- **temporalOrFrameGenerationConstraints**：需要连续帧、内部金字塔、历史 histogram 做场景变化检测；用于 FSR3 帧插值。
+- **documentedQualityOptions**：8x8 block size fixed in release
+- **documentedPerformanceNotes**：文档内存表按 GPU/4K 显示，但未比较不同格式成本。
+- **qualityPerformanceEvidence**：未找到可核实的格式路径性能结论
+- **sources**：
+  - URL: https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/release-FSR3-3.0.3/docs/techniques/optical-flow.md | 标题: FidelityFX Optical Flow | 等级: OfficialDocs | claim: Optical flow outputs R16G16_SINT and R32_UINT; HDR transfer/luminance | quoteOrSymbol: opticalFlowVector ... R16G16_SINT ... R32_UINT | searchRound: 1
+- **searchRoundsUsed**：3
+- **unresolvedQuestions**：输入 color 的格式枚举；输出语义坐标空间精确单位；独立于 FSR3 的 SDK
+- **conclusion**：AMD FidelityFX Optical Flow 官方协议公开了光流输出 R16G16_SINT、SCD R32_UINT 和 HDR transfer/luminance 输入需求，但输入颜色格式未枚举。
+
+## 无信息条目汇总
+
+| 效果组 | 已尝试来源类型 | 搜索轮数 | 仍缺失字段 |
+|---|---|---|---|
+| CRT | 网页搜索 | 1 | 上游映射；输入格式；色彩空间；HDR/FP16 |
+| CuNNy2 | 网页搜索 | 2 | CuNNy2 上游映射；格式；HDR/FP16；alpha |
+| Diagnostics | 网页搜索 | 1 | 上游映射；I/O 格式；HDR/FP16 |
+| FXAA | 网页搜索 | 4 | 固定输入格式；HDR/FP16；色彩空间 |
+| MLAA | 网页搜索 | 1 | 上游 SDK/实现；格式；HDR/FP16 |
+| Pixel Art | 网页搜索 | 1 | 具体像素画算法映射；格式；HDR/FP16 |
+| Sharpen | 网页搜索 | 1 | 具体锐化算法映射；格式；HDR/FP16 |
+
+## 证据边界说明
+
+- 官方契约：上表中 `OfficialDocs/OfficialHeader/OfficialRepository` 并带有明确引文的内容。
+- 官方样例行为：`OfficialRepository` 中 CasCmdLine 等参考样例的格式行为只作为参考实现记录，不扩张为 API 保证。
+- GitHub 实验结论：标记为 `GitHubExperiment` 的条目只代表社区/实验证据，不代表厂商保证。
+- 用户着色器内部 `rgba16f/rgba16hf` 只记录为中间表面证据。
+- 当官方资料与实验资料冲突时，本文件分别保留主张，未做强行合并。
+
+## 覆盖与排除验证
+
+- JSON 共 30 个对象，覆盖效果组：AMD FidelityFX Optical Flow、Anime4K、CAS、CRT、CuNNy、CuNNy2、DLSS、DLSSFG、Diagnostics、FSR、FSR2、FSR3、FSR4、FSRCNNX、FXAA、MLAA、NIS、NNEDI3、NVIDIA Optical Flow、Pixel Art、RAVU、RTXVideo、SMAA、Sharpen、XeSS、XeSSFG、xBRZ。
+- 不存在该排除效果条目。
+- 所有条目 searchRoundsUsed 均不超过 10。

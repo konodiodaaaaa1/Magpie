@@ -1,5 +1,7 @@
 #pragma once
 #include "SmallVector.h"
+#include <array>
+#include <chrono>
 
 namespace Magpie {
 
@@ -32,13 +34,27 @@ public:
 	SmallVector<float> GetTimings() noexcept;
 
 private:
+	struct QuerySlot {
+		winrt::com_ptr<ID3D11Query> disjoint;
+		winrt::com_ptr<ID3D11Query> start;
+		std::vector<winrt::com_ptr<ID3D11Query>> passes;
+		std::chrono::steady_clock::time_point submitted{};
+	};
+	void _Disable(const char* operation, HRESULT hr) noexcept;
+	bool _ReadQuery(ID3D11DeviceContext* d3dDC, ID3D11Query* query,
+		void* data, UINT size, std::chrono::steady_clock::time_point submitted) noexcept;
+
 	SmallVector<float> _timings;
 	wil::srwlock _timingsLock;
 
-	winrt::com_ptr<ID3D11Query> _disjointQuery;
-	winrt::com_ptr<ID3D11Query> _startQuery;
-	std::vector<winrt::com_ptr<ID3D11Query>> _passQueries;
-
+	// Backend-owned FIFO. Busy slots skip samples instead of blocking rendering.
+	std::array<QuerySlot, 3> _slots;
+	uint32_t _passCount = 0;
+	uint32_t _readSlot = 0;
+	uint32_t _writeSlot = 0;
+	uint32_t _pendingCount = 0;
+	uint64_t _skippedSamples = 0;
+	bool _recording = false;
 	uint32_t _curPass = 0;
 };
 

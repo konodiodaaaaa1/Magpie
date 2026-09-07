@@ -1,6 +1,7 @@
 #pragma once
 #include "PresenterBase.h"
 #include <dcomp.h>
+#include "FramePacingWait.h"
 
 namespace Magpie {
 
@@ -19,6 +20,10 @@ public:
 	) noexcept override;
 
 	bool EndFrame(bool waitForGpu = false) noexcept override;
+	bool WaitForFrameCapacity(DWORD timeout) noexcept override;
+	bool SupportsDeferredPresent() const noexcept override {
+		return !_isDCompPresenting && !_isResized && !_isSwitchingToSwapChain;
+	}
 
 	bool UsesFrameLatencyWaitableObject() const noexcept override {
 		return !_isDCompPresenting && !!_frameLatencyWaitableObject;
@@ -46,7 +51,7 @@ private:
 	
 	bool _isDCompPresenting = false;
 	bool _isResized = false;
-	bool _isframeLatencyWaited = false;
+	FrameLatencyGate _frameLatencyGate;
 	bool _isSwitchingToSwapChain = false;
 	uint32_t _frameLatencyWaitTimeoutCount = 0;
 	uint32_t _presentOccludedCount = 0;

@@ -31,6 +31,68 @@ static const char* GetWindowIDFromName(const char* name) noexcept {
 	}
 }
 
+uint64_t ImGuiImpl::PendingInputBuffer::Push(
+	PendingInputEvent event,
+	bool urgent,
+	bool critical
+) noexcept {
+	event.sequence = ++receivedSerial;
+
+	// Only adjacent continuous state may be collapsed. Never merge across a
+	// button/cancel boundary because every edge must retain its own position.
+	if (!events.empty() && event.type == PendingInputEventType::Move &&
+		events.back().type == PendingInputEventType::Move) {
+		events.back() = event;
+	} else if (!events.empty() && event.type == PendingInputEventType::Wheel &&
+		events.back().type == PendingInputEventType::Wheel) {
+		events.back().position = event.position;
+		events.back().wheelX += event.wheelX;
+		events.back().wheelY += event.wheelY;
+		events.back().sequence = event.sequence;
+	} else {
+		if (events.size() >= MAX_EVENTS) {
+			auto coalescible = std::find_if(events.begin(), events.end(),
+				[](const PendingInputEvent& item) noexcept {
+					return item.type == PendingInputEventType::Move ||
+						item.type == PendingInputEventType::Wheel;
+				});
+			if (coalescible != events.end()) {
+				events.erase(coalescible);
+			} else {
+				events.clear();
+				event.type = PendingInputEventType::Cancel;
+				event.button = -1;
+				event.down = false;
+				urgent = true;
+				critical = true;
+				++overflowCount;
+			}
+		}
+		events.push_back(event);
+	}
+
+	if (urgent) {
+		urgentSerial = event.sequence;
+	}
+	if (critical) {
+		criticalEvents.emplace_back(event.sequence, std::chrono::steady_clock::now());
+		while (criticalEvents.size() > 64) {
+			criticalEvents.pop_front();
+		}
+	}
+	return event.sequence;
+}
+
+void ImGuiImpl::PendingInputBuffer::Reset() noexcept {
+	events.clear();
+	criticalEvents.clear();
+	receivedSerial = 0;
+	consumedSerial = 0;
+	presentedSerial = 0;
+	urgentSerial = 0;
+	overflowCount = 0;
+}
+
 ImGuiImpl::~ImGuiImpl() noexcept {
 	if (ImGui::GetCurrentContext()) {
 		ImGui::DestroyContext();
@@ -51,6 +113,9 @@ bool ImGuiImpl::Initialize(DeviceResources& deviceResources) noexcept {
 	ImGuiIO& io = ImGui::GetIO();
 	io.BackendPlatformName = "Magpie";
 	io.ConfigFlags |= ImGuiConfigFlags_NavNoCaptureKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
+	// The application buffer deliberately feeds at most one control edge to
+	// each UI frame, so ImGui must not retain a second hidden trickle queue.
+	io.ConfigInputTrickleEventQueue = false;
 	// 禁用 ini 配置文件
 	io.IniFilename = nullptr;
 #ifndef _DEBUG
@@ -76,6 +141,8 @@ void ImGuiImpl::NewFrame(
 	float dpiScale
 ) noexcept {
 	ImGuiIO& io = ImGui::GetIO();
+	_fittsLawAdjustment = fittsLawAdjustment;
+	_resetDragTolerance = 4.0f * dpiScale;
 
 	{
 		const SIZE destSize = Win32Helper::GetSizeOfRect(ScalingWindow::Get().Renderer().DestRect());
@@ -87,7 +154,11 @@ void ImGuiImpl::NewFrame(
 		}
 	}
 
-	_UpdateMousePos(fittsLawAdjustment);
+	const ImVec2 mousePos = _CaptureMousePos(_fittsLawAdjustment);
+	if (mousePos != _lastQueuedMousePos) {
+		_QueueMove(mousePos, _ownedMouseButtons != 0);
+	}
+	_FlushPendingInput();
 
 	// 不接受键盘输入
 	if (io.WantCaptureKeyboard) {
@@ -96,6 +167,11 @@ void ImGuiImpl::NewFrame(
 	}
 
 	ImGui::NewFrame();
+	if (_frameContainsCancel) {
+		// Cancel is a lifecycle transition, not a synthetic click release.
+		ImGui::ClearActiveID();
+		ImGui::ClosePopupsExceptModals();
+	}
 	
 	for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows) {
 		if (window->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoMove)) {
@@ -173,11 +249,13 @@ void ImGuiImpl::NewFrame(
 				const float thresholdY = std::max(window->Size.y / io.DisplaySize.y, 0.2f);
 
 				// 根据左右边距比例决定贴靠
-				float ratio = pos.x / (io.DisplaySize.x - pos.x - window->Size.x);
-				if (ratio < thresholdX) {
+				const float leftMargin = std::max(pos.x, 0.0f);
+				const float rightMargin = std::max(
+					io.DisplaySize.x - pos.x - window->Size.x, 0.0f);
+				if (leftMargin < thresholdX * rightMargin) {
 					option.hArea = 0;
 					option.hPos = pos.x / dpiScale;
-				} else if (ratio <= 1 / thresholdX) {
+				} else if (leftMargin * thresholdX <= rightMargin) {
 					option.hArea = 1;
 					option.hPos = (pos.x + window->Size.x / 2) / io.DisplaySize.x;
 				} else {
@@ -186,11 +264,13 @@ void ImGuiImpl::NewFrame(
 				}
 				
 				// 根据上下边距比例决定贴靠
-				ratio = pos.y / (io.DisplaySize.y - pos.y - window->Size.y);
-				if (ratio < thresholdY) {
+				const float topMargin = std::max(pos.y, 0.0f);
+				const float bottomMargin = std::max(
+					io.DisplaySize.y - pos.y - window->Size.y, 0.0f);
+				if (topMargin < thresholdY * bottomMargin) {
 					option.vArea = 0;
 					option.vPos = pos.y / dpiScale;
-				} else if (ratio <= 1 / thresholdY) {
+				} else if (topMargin * thresholdY <= bottomMargin) {
 					option.vArea = 1;
 					option.vPos = (pos.y + window->Size.y / 2) / io.DisplaySize.y;
 				} else {
@@ -217,6 +297,12 @@ void ImGuiImpl::NewFrame(
 
 void ImGuiImpl::Draw(POINT drawOffset) noexcept {
 	ImGui::Render();
+	_StagePresentedWindowRects();
+
+	ImDrawData* drawData = ImGui::GetDrawData();
+	if (!drawData || !drawData->Valid) {
+		return;
+	}
 
 	const RECT& rendererRect = ScalingWindow::Get().RendererRect();
 	const RECT& destRect = ScalingWindow::Get().Renderer().DestRect();
@@ -224,7 +310,7 @@ void ImGuiImpl::Draw(POINT drawOffset) noexcept {
 		destRect.left - rendererRect.left + drawOffset.x,
 		destRect.top - rendererRect.top + drawOffset.y
 	};
-	_backend.RenderDrawData(*ImGui::GetDrawData(), viewportOffset);
+	_backend.RenderDrawData(*drawData, viewportOffset);
 }
 
 void ImGuiImpl::Tooltip(
@@ -290,90 +376,347 @@ void ImGuiImpl::Tooltip(
 	ImGui::End();
 }
 
-void ImGuiImpl::_UpdateMousePos(float fittsLawAdjustment) noexcept {
-	ImGuiIO& io = ImGui::GetIO();
-	io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
-
-	// 调整缩放窗口大小或鼠标被前台窗口捕获时不应和叠加层交互
+ImVec2 ImGuiImpl::_CaptureMousePos(float fittsLawAdjustment) const noexcept {
+	// Resizing the scaling HWND and forwarding input to the source are explicit
+	// ownership boundaries. Queue an unavailable position instead of mutating
+	// ImGui state from WndProc.
 	const CursorManager& cursorManager = ScalingWindow::Get().CursorManager();
-	if (ScalingWindow::Get().IsResizingOrMoving() || cursorManager.IsCursorCapturedOnForeground()) {
-		return;
+	if (ScalingWindow::Get().IsResizingOrMoving() ||
+		cursorManager.IsCursorCapturedOnForeground()) {
+		return ImVec2(-FLT_MAX, -FLT_MAX);
 	}
 
 	const POINT cursorPos = cursorManager.CursorPos();
-
-	// 转换为目标矩形局部坐标
 	const RECT& destRect = ScalingWindow::Get().Renderer().DestRect();
-	io.MousePos.x = float(cursorPos.x - destRect.left);
-	io.MousePos.y = float(cursorPos.y - destRect.top);
+	float mouseX = float(cursorPos.x - destRect.left);
+	float mouseY = float(cursorPos.y - destRect.top);
+	if (mouseY >= 0 && mouseY < fittsLawAdjustment) {
+		mouseY = fittsLawAdjustment;
+	}
+	return ImVec2(mouseX, mouseY);
+}
 
-	// 下移鼠标的逻辑位置使得在上边缘可以选中工具栏按钮
-	if (io.MousePos.y >= 0 && io.MousePos.y < fittsLawAdjustment) {
-		io.MousePos.y = fittsLawAdjustment;
+void ImGuiImpl::_QueueMove(ImVec2 position, bool urgent) noexcept {
+	if ((_ownedMouseButtons & 1u) &&
+		(std::abs(position.x - _leftPressPosition.x) > _resetDragTolerance ||
+		 std::abs(position.y - _leftPressPosition.y) > _resetDragTolerance)) {
+		_rawLeftDragged = true;
+	}
+	_lastQueuedMousePos = position;
+	_pendingInput.Push(PendingInputEvent{
+		.type = PendingInputEventType::Move,
+		.position = position
+	}, urgent, false);
+}
+
+void ImGuiImpl::_QueueCancel(ImVec2 position) noexcept {
+	_pendingInput.Push(PendingInputEvent{
+		.type = PendingInputEventType::Cancel,
+		.position = position,
+		.button = -1,
+		.down = false
+	}, true, true);
+	_ReleaseOwnedMouseButtons();
+}
+
+void ImGuiImpl::_FlushPendingInput() noexcept {
+	ImGuiIO& io = ImGui::GetIO();
+	_frameContainsCancel = false;
+	_leftReleaseWasDrag = false;
+	uint64_t consumedSerial = _pendingInput.consumedSerial;
+	bool deliveredEdge = false;
+
+	while (!_pendingInput.events.empty() && !deliveredEdge) {
+		PendingInputEvent event = _pendingInput.events.front();
+		_pendingInput.events.pop_front();
+		consumedSerial = event.sequence;
+
+		switch (event.type) {
+		case PendingInputEventType::Move:
+			io.AddMousePosEvent(event.position.x, event.position.y);
+			break;
+		case PendingInputEventType::Button:
+			io.AddMousePosEvent(event.position.x, event.position.y);
+			io.AddMouseButtonEvent(event.button, event.down);
+			if (event.button == ImGuiMouseButton_Left) {
+				if (event.down) {
+					_leftPressTimeUs = event.timestampUs;
+					_leftPressHasControl = event.controlDown;
+				} else {
+					_leftReleaseWasDrag = event.dragged;
+				}
+			}
+			deliveredEdge = true;
+			break;
+		case PendingInputEventType::Wheel:
+			io.AddMousePosEvent(event.position.x, event.position.y);
+			io.AddMouseWheelEvent(event.wheelX, event.wheelY);
+			deliveredEdge = true;
+			break;
+		case PendingInputEventType::Leave:
+			io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+			deliveredEdge = true;
+			break;
+		case PendingInputEventType::Cancel:
+			io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+			for (int button = 0; button < ImGuiMouseButton_COUNT; ++button) {
+				io.AddMouseButtonEvent(button, false);
+			}
+			_frameContainsCancel = true;
+			deliveredEdge = true;
+			break;
+		}
+	}
+
+	_pendingInput.consumedSerial = consumedSerial;
+	_frameConsumedSerial = consumedSerial;
+}
+
+void ImGuiImpl::_StagePresentedWindowRects() noexcept {
+	_stagedPresentedWindowRects.clear();
+	_stagedHasOpenPopup = !ImGui::GetCurrentContext()->OpenPopupStack.empty();
+	for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows | std::views::reverse) {
+		if (!window->WasActive || window->Hidden ||
+			(window->Flags & ImGuiWindowFlags_NoMouseInputs)) {
+			continue;
+		}
+		_stagedPresentedWindowRects.emplace_back(
+			GetWindowIDFromName(window->Name),
+			ImVec4(window->Pos.x, window->Pos.y,
+				window->Pos.x + window->Size.x, window->Pos.y + window->Size.y));
+		if (window->Flags & ImGuiWindowFlags_Popup) {
+			break;
+		}
 	}
 }
 
 void ImGuiImpl::ClearStates() noexcept {
-	ImGuiIO& io = ImGui::GetIO();
-	io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
-	std::fill(std::begin(io.MouseDown), std::end(io.MouseDown), false);
+	_ReleaseOwnedMouseButtons();
+	_pendingInput.Reset();
+	_lastQueuedMousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+	_frameConsumedSerial = 0;
+	_frameContainsCancel = false;
+	_stagedPresentedWindowRects.clear();
+	_presentedWindowRects.clear();
+	_stagedHasOpenPopup = false;
+	_presentedHasOpenPopup = false;
 
-	CursorManager& cursorManager = ScalingWindow::Get().CursorManager();
-	cursorManager.IsCursorCapturedOnOverlay(false);
-	cursorManager.IsCursorOnOverlay(false);
+	if (ImGui::GetCurrentContext()) {
+		ImGuiIO& io = ImGui::GetIO();
+		io.ClearEventsQueue();
+		io.ClearInputMouse();
+		ImGui::ClearActiveID();
+		ImGui::ClosePopupsExceptModals();
+	}
 
-	// 更新状态
-	ImGui::NewFrame();
-	ImGui::EndFrame();
-
-	if (io.WantCaptureMouse) {
-		// 拖拽时隐藏 UI 需渲染两帧才能重置 WantCaptureMouse
-		ImGui::NewFrame();
-		ImGui::EndFrame();
+	if (CursorManager* cursorManager =
+		ScalingWindow::Get().TryGetCursorManager()) {
+		cursorManager->IsCursorOnOverlay(false);
 	}
 }
 
-void ImGuiImpl::MessageHandler(UINT msg, WPARAM wParam, LPARAM /*lParam*/) noexcept {
-	ImGuiIO& io = ImGui::GetIO();
-	
-	if (!io.WantCaptureMouse) {
-		return;
-	}
+void ImGuiImpl::OnPresentSucceeded() noexcept {
+	_pendingInput.presentedSerial = std::max(
+		_pendingInput.presentedSerial, _frameConsumedSerial);
+	_presentedWindowRects = _stagedPresentedWindowRects;
+	_presentedHasOpenPopup = _stagedHasOpenPopup;
 
-	// 缩放窗口不会收到双击消息
+	const auto now = std::chrono::steady_clock::now();
+	std::chrono::steady_clock::duration maxLatency{};
+	while (!_pendingInput.criticalEvents.empty() &&
+		_pendingInput.criticalEvents.front().first <= _pendingInput.presentedSerial) {
+		maxLatency = std::max(maxLatency,
+			now - _pendingInput.criticalEvents.front().second);
+		_pendingInput.criticalEvents.pop_front();
+	}
+	if (maxLatency >= std::chrono::milliseconds(50) &&
+		now - _lastSlowInputLog >= std::chrono::seconds(1)) {
+		_lastSlowInputLog = now;
+		Logger::Get().Warn(fmt::format(
+			"Overlay input-to-present latency {:.1f} ms (received={}, consumed={}, presented={})",
+			std::chrono::duration<double, std::milli>(maxLatency).count(),
+			_pendingInput.receivedSerial,
+			_pendingInput.consumedSerial,
+			_pendingInput.presentedSerial));
+	}
+}
+
+bool ImGuiImpl::HasPendingInput() const noexcept {
+	return _pendingInput.HasPending();
+}
+
+bool ImGuiImpl::HasUrgentInput() const noexcept {
+	return _pendingInput.HasUrgent();
+}
+
+void ImGuiImpl::_ReleaseOwnedMouseButtons(bool releaseCapture) noexcept {
+	_ownedMouseButtons = 0;
+	// ClearStates can be reached while a partially initialized ScalingWindow is
+	// being torn down. The CursorManager is optional at that point.
+	if (CursorManager* cursorManager =
+		ScalingWindow::Get().TryGetCursorManager()) {
+		cursorManager->IsCursorCapturedOnOverlay(false);
+	}
+	if (releaseCapture && GetCapture() == ScalingWindow::Get().Handle()) {
+		ReleaseCapture();
+	}
+}
+
+static int GetMouseButtonFromMessage(UINT msg, WPARAM wParam) noexcept {
 	switch (msg) {
 	case WM_LBUTTONDOWN:
-	case WM_RBUTTONDOWN:
-	{
-		if (!ImGui::IsAnyMouseDown()) {
-			ScalingWindow::Get().CursorManager().IsCursorCapturedOnOverlay(true);
-		}
-		
-		io.MouseDown[msg == WM_LBUTTONDOWN ? 0 : 1] = true;
-		break;
-	}
 	case WM_LBUTTONUP:
+	case WM_NCLBUTTONDOWN:
+	case WM_NCLBUTTONUP:
+		return 0;
+	case WM_RBUTTONDOWN:
 	case WM_RBUTTONUP:
-	{
-		io.MouseDown[msg == WM_LBUTTONUP ? 0 : 1] = false;
-
-		if (!ImGui::IsAnyMouseDown()) {
-			ScalingWindow::Get().CursorManager().IsCursorCapturedOnOverlay(false);
-		}
-
-		break;
+	case WM_NCRBUTTONDOWN:
+	case WM_NCRBUTTONUP:
+		return 1;
+	case WM_MBUTTONDOWN:
+	case WM_MBUTTONUP:
+	case WM_NCMBUTTONDOWN:
+	case WM_NCMBUTTONUP:
+		return 2;
+	case WM_XBUTTONDOWN:
+	case WM_XBUTTONUP:
+	case WM_NCXBUTTONDOWN:
+	case WM_NCXBUTTONUP:
+		return GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? 3 : 4;
+	default:
+		return -1;
 	}
+}
+
+static bool IsMouseButtonDownMessage(UINT msg) noexcept {
+	return msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN ||
+		msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN ||
+		msg == WM_NCLBUTTONDOWN || msg == WM_NCRBUTTONDOWN ||
+		msg == WM_NCMBUTTONDOWN || msg == WM_NCXBUTTONDOWN;
+}
+
+static bool IsNonClientMouseButtonDownMessage(UINT msg) noexcept {
+	return msg == WM_NCLBUTTONDOWN || msg == WM_NCRBUTTONDOWN ||
+		msg == WM_NCMBUTTONDOWN || msg == WM_NCXBUTTONDOWN;
+}
+
+ImGuiInputResult ImGuiImpl::MessageHandler(
+	UINT msg,
+	WPARAM wParam,
+	LPARAM lParam
+) noexcept {
+	const int mouseButton = GetMouseButtonFromMessage(msg, wParam);
+	if (mouseButton >= 0) {
+		ScalingWindow::Get().CursorManager().Update();
+		const ImVec2 mousePos = _CaptureMousePos(_fittsLawAdjustment);
+		_QueueMove(mousePos, _ownedMouseButtons != 0);
+		const bool isDown = IsMouseButtonDownMessage(msg);
+		const uint32_t buttonMask = 1u << mouseButton;
+		if (isDown) {
+			if (IsNonClientMouseButtonDownMessage(msg)) {
+				return ImGuiInputResult::Redraw;
+			}
+			// A visible popup also owns the click outside its rectangle: ImGui
+			// needs that edge to dismiss it. Keep hit testing based on the last
+			// successful Present, and let the normal queued press/release path
+			// close the popup without selecting a value or clicking through it.
+			if (!(_ownedMouseButtons || _presentedHasOpenPopup ||
+				_GetPresentedHoveredWindowId(mousePos))) {
+				return ImGuiInputResult::Redraw;
+			}
+			if (_ownedMouseButtons & buttonMask) {
+				return ImGuiInputResult::Redraw;
+			}
+			if (!_ownedMouseButtons) {
+				ScalingWindow::Get().CursorManager().IsCursorCapturedOnOverlay(true);
+				SetCapture(ScalingWindow::Get().Handle());
+			}
+			_ownedMouseButtons |= buttonMask;
+			if (mouseButton == ImGuiMouseButton_Left) {
+				_leftPressPosition = mousePos;
+				_rawLeftDragged = false;
+			}
+		} else {
+			if (!(_ownedMouseButtons & buttonMask)) {
+				return ImGuiInputResult::Redraw;
+			}
+			_ownedMouseButtons &= ~buttonMask;
+			if (!_ownedMouseButtons) {
+				_ReleaseOwnedMouseButtons();
+			}
+		}
+		_pendingInput.Push(PendingInputEvent{
+			.type = PendingInputEventType::Button,
+			.position = mousePos,
+			.button = mouseButton,
+			.down = isDown,
+			.timestampUs = uint64_t(static_cast<uint32_t>(GetMessageTime())) * 1000,
+			.dragged = mouseButton == ImGuiMouseButton_Left && _rawLeftDragged,
+			.controlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0
+		}, true, true);
+		return ImGuiInputResult::Urgent;
+	}
+
+	switch (msg) {
+	case WM_MOUSEMOVE:
+	case WM_NCMOUSEMOVE:
+		ScalingWindow::Get().CursorManager().Update();
+		_QueueMove(_CaptureMousePos(_fittsLawAdjustment), _ownedMouseButtons != 0);
+		return _ownedMouseButtons ? ImGuiInputResult::Urgent : ImGuiInputResult::Redraw;
+	case WM_MOUSELEAVE:
+	case WM_NCMOUSELEAVE:
+		if (!_ownedMouseButtons) {
+			_lastQueuedMousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+			_pendingInput.Push(PendingInputEvent{
+				.type = PendingInputEventType::Leave,
+				.position = _lastQueuedMousePos
+			}, false, false);
+		}
+		return _ownedMouseButtons ? ImGuiInputResult::Urgent : ImGuiInputResult::Redraw;
 	case WM_MOUSEWHEEL:
 	{
-		io.MouseWheel += (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
-		break;
+		ScalingWindow::Get().CursorManager().Update();
+		const ImVec2 mousePos = _CaptureMousePos(_fittsLawAdjustment);
+		_QueueMove(mousePos, _ownedMouseButtons != 0);
+		if (_ownedMouseButtons || _GetPresentedHoveredWindowId(mousePos)) {
+			_pendingInput.Push(PendingInputEvent{
+				.type = PendingInputEventType::Wheel,
+				.position = mousePos,
+				.wheelY = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA
+			}, true, true);
+			return ImGuiInputResult::Urgent;
+		}
+		return ImGuiInputResult::Redraw;
 	}
 	case WM_MOUSEHWHEEL:
 	{
-		io.MouseWheelH += (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA;
+		ScalingWindow::Get().CursorManager().Update();
+		const ImVec2 mousePos = _CaptureMousePos(_fittsLawAdjustment);
+		_QueueMove(mousePos, _ownedMouseButtons != 0);
+		if (_ownedMouseButtons || _GetPresentedHoveredWindowId(mousePos)) {
+			_pendingInput.Push(PendingInputEvent{
+				.type = PendingInputEventType::Wheel,
+				.position = mousePos,
+				.wheelX = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA
+			}, true, true);
+			return ImGuiInputResult::Urgent;
+		}
+		return ImGuiInputResult::Redraw;
+	}
+	case WM_CAPTURECHANGED:
+		if ((HWND)lParam != ScalingWindow::Get().Handle() && _ownedMouseButtons) {
+			_QueueCancel(_CaptureMousePos(_fittsLawAdjustment));
+			return ImGuiInputResult::Urgent;
+		}
 		break;
+	case WM_CANCELMODE:
+	case WM_KILLFOCUS:
+		_QueueCancel(_CaptureMousePos(_fittsLawAdjustment));
+		return ImGuiInputResult::Urgent;
 	}
-	}
+
+	return ImGuiInputResult::None;
 }
 
 std::optional<ImVec4> ImGuiImpl::GetWindowRect(const char* id) const noexcept {
@@ -393,7 +736,10 @@ std::optional<ImVec4> ImGuiImpl::GetWindowRect(const char* id) const noexcept {
 }
 
 const char* ImGuiImpl::GetHoveredWindowId() const noexcept {
-	const ImVec2 mousePos = ImGui::GetIO().MousePos;
+	return _GetHoveredWindowId(ImGui::GetIO().MousePos);
+}
+
+const char* ImGuiImpl::_GetHoveredWindowId(ImVec2 mousePos) const noexcept {
 	// 自顶向下遍历
 	for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows | std::views::reverse) {
 		// 排除不接受鼠标输入的窗口，来自
@@ -415,6 +761,16 @@ const char* ImGuiImpl::GetHoveredWindowId() const noexcept {
 		}
 	}
 
+	return nullptr;
+}
+
+const char* ImGuiImpl::_GetPresentedHoveredWindowId(ImVec2 mousePos) const noexcept {
+	for (const auto& [windowId, rect] : _presentedWindowRects) {
+		if (mousePos.x >= rect.x && mousePos.y >= rect.y &&
+			mousePos.x < rect.z && mousePos.y < rect.w) {
+			return windowId.c_str();
+		}
+	}
 	return nullptr;
 }
 

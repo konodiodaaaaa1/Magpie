@@ -237,6 +237,9 @@
   <data name="Profile_General_3DGameMode.Header" xml:space="preserve">
     <value>3D Spielmodus</value>
   </data>
+  <data name="Profile_General_HdrCompatibility.Header" xml:space="preserve">
+    <value>HDR compatibility</value>
+  </data>
   <data name="Profile_General_AutoScale.Header" xml:space="preserve">
     <value>Automatisch skalieren, wenn im Vordergrund</value>
   </data>
@@ -930,6 +933,9 @@
   </data>
   <data name="Profile_General_3DGameMode.Description" xml:space="preserve">
     <value>Aktiviert Optimierungen für 3D‑Spiele, ist aber nicht mit Symbolleiste und Fensterskalierung kompatibel</value>
+  </data>
+  <data name="Profile_General_HdrCompatibility.Description" xml:space="preserve">
+    <value>Enable the experimental HDR capture-to-effect compatibility path. Keep disabled unless you are testing HDR support</value>
   </data>
   <data name="Home_Toolbar_InitialState_Fullscreen.Header" xml:space="preserve">
     <value>Vollbildskalierung</value>

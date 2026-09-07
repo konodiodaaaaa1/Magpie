@@ -13,7 +13,11 @@ public:
 
 	bool Initialize(DeviceResources& deviceResources) noexcept;
 
-	void Draw(ID3D11Texture2D* backBuffer, POINT drawOffset) noexcept;
+	// sceneTexture is the destination-sized scene underneath an independent UI surface.
+	void Draw(ID3D11Texture2D* backBuffer, POINT drawOffset,
+		ID3D11Texture2D* sceneTexture = nullptr) noexcept;
+
+	bool IsBackgroundDependent() const noexcept { return _isBackgroundDependent; }
 
 	void IsCursorVisible(bool value) noexcept {
 		_isCursorVisible = value;
@@ -29,9 +33,9 @@ private:
 	std::pair<HCURSOR, POINT> _GetCursorState(bool& isActive) const noexcept;
 
 	enum class _CursorType {
-		// 彩色光标，此时纹理中 RGB 通道已预乘 A 通道（premultiplied alpha），A 通道已预先取反
-		// 这是为了减少着色器的计算量以及确保（可能进行的）双线性差值的准确性
-		// 计算公式: FinalColor = ScreenColor * CursorColor.a + CursorColor
+		// 彩色光标：RGB 已预乘 A，A 为标准覆盖率（0 透明，1 不透明），支持双线性插值。
+		// FinalColor = CursorColor + ScreenColor * (1 - CursorColor.a)
+		// FinalAlpha = CursorColor.a + ScreenAlpha * (1 - CursorColor.a)
 		// 纹理格式: DXGI_FORMAT_R8G8B8A8_UNORM
 		Color = 0,
 		// 彩色掩码光标，此时 A 通道可能为 0 或 255
@@ -71,6 +75,9 @@ private:
 	winrt::com_ptr<ID3D11Texture2D> _tempCursorTexture;
 	winrt::com_ptr<ID3D11ShaderResourceView> _tempCursorTextureRtv;
 	SIZE _tempCursorTextureSize{};
+	winrt::com_ptr<ID3D11Texture2D> _tempSceneTexture;
+	winrt::com_ptr<ID3D11ShaderResourceView> _tempSceneSrv;
+	bool _isBackgroundDependent = false;
 
 	// 这两个成员用于检查自动隐藏光标
 	HCURSOR _lastRawCursorHandle = NULL;

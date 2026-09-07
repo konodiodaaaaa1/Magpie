@@ -1,21 +1,40 @@
 namespace Magpie {
 	runtimeclass ScalingModeParameter : Windows.UI.Xaml.Data.INotifyPropertyChanged {
 		Boolean IsBoolean { get; };
+		Boolean IsChoice { get; };
 		Boolean IsFloat { get; };
 		Boolean IsVisible { get; };
+		Boolean IsEnabled { get; };
 		Boolean BooleanValue;
+		Int32 ChoiceValue;
+		Int32 ChoiceIndex;
+		IObservableVector<String> Choices { get; };
 		Double Value;
 		String Label { get; };
+		Boolean HasDescriptionLine { get; };
+		Boolean HasNoDescriptionLine { get; };
+		String PrimaryLabel { get; };
+		String DescriptionLabel { get; };
 		String ValueText { get; };
 		Double Minimum { get; };
 		Double Maximum { get; };
 		Double Step { get; };
 	}
 
-	runtimeclass EffectParametersViewModel {
+	runtimeclass EffectParameterGroupViewModel : Windows.UI.Xaml.Data.INotifyPropertyChanged {
+		String Label { get; };
+		Boolean HasLabel { get; };
+		Boolean IsVisible { get; };
+		Double ColumnWidth { get; };
+		Boolean ShowLeadingSeparator { get; };
+		IVector<IInspectable> Params { get; };
+	}
+
+	runtimeclass EffectParametersViewModel : Windows.UI.Xaml.Data.INotifyPropertyChanged {
 		UInt32 ScalingModeIdx;
 		UInt32 EffectIdx;
 
-		IVector<IInspectable> Params { get; };
+		Double ContentWidth { get; };
+		IVector<IInspectable> Groups { get; };
 	}
 }

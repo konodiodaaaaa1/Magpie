@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include "App.h"
 #include "MainWindow.h"
+#include "ErrorService.h"
 
 using namespace ::Magpie;
 using namespace winrt::Magpie::implementation;
@@ -19,15 +20,20 @@ std::optional<std::filesystem::path> FileDialogHelper::OpenFileDialog(
 	fileDialog->GetOptions(&oldOptions);
 	fileDialog->SetOptions(oldOptions | options | FOS_FORCEFILESYSTEM);
 
-	if (fileDialog->Show(App::Get().MainWindow().Handle()) != S_OK) {
-		// 被用户取消
-		return std::filesystem::path{};
+	const HRESULT showResult = fileDialog->Show(App::Get().MainWindow().Handle());
+	if (showResult == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::filesystem::path{};
+	if (FAILED(showResult)) {
+		ErrorService::Get().Report(ScalingError::FileDialogFailed, "IFileDialog::Show", nullptr,
+			static_cast<uint32_t>(showResult));
+		return std::nullopt;
 	}
 
 	com_ptr<IShellItem> file;
 	HRESULT hr = fileDialog->GetResult(file.put());
 	if (FAILED(hr)) {
 		Logger::Get().ComError("IFileSaveDialog::GetResult 失败", hr);
+		ErrorService::Get().Report(ScalingError::FileDialogFailed, "IFileSaveDialog::GetResult", nullptr,
+			static_cast<uint32_t>(hr));
 		return std::nullopt;
 	}
 
@@ -35,6 +41,8 @@ std::optional<std::filesystem::path> FileDialogHelper::OpenFileDialog(
 	hr = file->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, fileName.put());
 	if (FAILED(hr)) {
 		Logger::Get().ComError("IShellItem::GetDisplayName 失败", hr);
+		ErrorService::Get().Report(ScalingError::FileDialogFailed, "IShellItem::GetDisplayName", nullptr,
+			static_cast<uint32_t>(hr));
 		return std::nullopt;
 	}
 

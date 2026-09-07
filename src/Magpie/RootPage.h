@@ -2,6 +2,7 @@
 #include "RootPage.g.h"
 #include "Event.h"
 #include "NewProfileViewModel.h"
+#include "ProfileViewModel.h"
 
 namespace Magpie {
 struct Profile;
@@ -41,14 +42,56 @@ struct RootPage : RootPageT<RootPage> {
 
 	void NewProfileNameTextBox_KeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& args);
 
+	void ProfileMoreOptionsButton_Click(IInspectable const& sender, RoutedEventArgs const&);
+
+	void ProfileRenameMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&);
+
+	void ProfileDeleteMenuItem_Click(IInspectable const& sender, RoutedEventArgs const&);
+
+	void ProfileRenameTextBox_Loaded(IInspectable const& sender, RoutedEventArgs const&);
+
+	void ProfileReorderHandle_PointerPressed(
+		IInspectable const& sender,
+		Input::PointerRoutedEventArgs const& args);
+
+	void ProfileReorderHandle_PointerMoved(
+		IInspectable const& sender,
+		Input::PointerRoutedEventArgs const& args);
+
+	void ProfileReorderHandle_PointerReleased(
+		IInspectable const& sender,
+		Input::PointerRoutedEventArgs const& args);
+
+	void ProfileReorderHandle_PointerCanceled(
+		IInspectable const& sender,
+		Input::PointerRoutedEventArgs const& args);
+
+	void ProfileReorderHandle_PointerCaptureLost(
+		IInspectable const& sender,
+		Input::PointerRoutedEventArgs const& args);
+
 	void NavigateToAboutPage();
 
 	TitleBarControl& TitleBar();
 
 private:
+	struct ProfileReorderPreviewItem {
+		uint32_t index = 0;
+		FrameworkElement container{ nullptr };
+		Transform originalRenderTransform{ nullptr };
+		CompositeTransform previewTransform{ nullptr };
+		double targetOffset = 0;
+	};
+
 	void _UpdateTheme(bool updateIcons);
 
 	fire_and_forget _LoadIcon(MUXC::NavigationViewItem const& item, const ::Magpie::Profile& profile);
+
+	MUXC::NavigationViewItem _CreateProfileNavigationViewItem(
+		uint32_t index,
+		const ::Magpie::Profile& profile);
+
+	void _RebindProfileNavigationViewModels() noexcept;
 
 	void _UpdateIcons(bool skipDesktop);
 
@@ -58,7 +101,22 @@ private:
 
 	void _ProfileService_ProfileRemoved(uint32_t idx);
 
-	void _ProfileService_ProfileReordered(uint32_t profileIdx, bool isMoveUp);
+	void _ProfileService_ProfileMoved(uint32_t fromIndex, uint32_t toIndex);
+
+	MUXC::NavigationViewItem _FindParentProfileNavigationViewItem(
+		DependencyObject const& element) const noexcept;
+
+	uint32_t _GetProfileReorderTargetIndex(double pointerY) const noexcept;
+
+	void _PrepareProfileReorderPreview() noexcept;
+
+	void _UpdateProfileReorderPreview(uint32_t targetIndex) noexcept;
+
+	void _ClearProfileReorderPreview() noexcept;
+
+	void _QueueFinishProfileReorder(bool commit) noexcept;
+
+	void _FinishProfileReorder(bool commit) noexcept;
 
 	void _UpdateNewProfileNameTextBox(bool fillWithTitle);
 
@@ -66,11 +124,31 @@ private:
 	::Magpie::Event<uint32_t>::EventRevoker _dpiChangedRevoker;
 
 	com_ptr<implementation::NewProfileViewModel> _newProfileViewModel = make_self<implementation::NewProfileViewModel>();
+	std::vector<com_ptr<implementation::ProfileViewModel>> _profileNavigationViewModels;
 	::Magpie::Event<::Magpie::Profile&>::EventRevoker _profileAddedRevoker;
 	::Magpie::Event<uint32_t>::EventRevoker _profileRenamedRevoker;
 	::Magpie::Event<uint32_t>::EventRevoker _profileRemovedRevoker;
-	::Magpie::Event<uint32_t, bool>::EventRevoker _profileMovedRevoker;
+	::Magpie::Event<uint32_t, uint32_t>::EventRevoker _profileMovedRevoker;
 	Primitives::FlyoutBase::Opening_revoker _contextFlyoutOpeningRevoker;
+
+	Button _profileMoreOptionsButton{ nullptr };
+	FrameworkElement _profileReorderHandle{ nullptr };
+	FrameworkElement _profileReorderContainer{ nullptr };
+	MUXC::NavigationViewItem _profileReorderItem{ nullptr };
+	Transform _profileOriginalRenderTransform{ nullptr };
+	CompositeTransform _profileDragTransform{ nullptr };
+	std::vector<ProfileReorderPreviewItem> _profileReorderPreviewItems;
+	std::vector<double> _profileReorderItemCenters;
+	double _profileOriginalOpacity = 1;
+	double _profilePointerStartY = 0;
+	double _profileReorderSlotExtent = 0;
+	int32_t _profileOriginalZIndex = 0;
+	uint32_t _profileReorderOriginalIndex = 0;
+	uint32_t _profileReorderTargetIndex = 0;
+	uint32_t _profileReorderPointerId = 0;
+	bool _isProfileReorderDragging = false;
+	bool _isProfileReorderFinishQueued = false;
+	bool _queuedProfileReorderCommit = false;
 };
 
 }

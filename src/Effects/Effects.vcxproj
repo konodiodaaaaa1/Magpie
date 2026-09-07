@@ -4,8 +4,8 @@
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{62503530-b84b-4cc2-80b6-3f89618172b7}</ProjectGuid>
     <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
-    <IntDir>$(SolutionDir)\obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
-    <OutDir>$(SolutionDir)\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(BuildRoot)\obj\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</IntDir>
+    <OutDir>$(BuildRoot)\bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="..\Common.Pre.props" />
@@ -27,12 +27,6 @@
       <FileType>Document</FileType>
     </CopyFileToFolders>
     <CopyFileToFolders Include="Diagnostics\FrameGuidance_Confidence.hlsl">
-      <FileType>Document</FileType>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="Diagnostics\FrameGuidance_Depth.hlsl">
-      <FileType>Document</FileType>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="Diagnostics\FrameGuidance_DepthResidual.hlsl">
       <FileType>Document</FileType>
     </CopyFileToFolders>
     <CopyFileToFolders Include="XeSSFG\XeSS_FrameGeneration_x2_ZeroMV.hlsl">
@@ -58,33 +52,6 @@
 	<CopyFileToFolders Include="MLAA\MLAA.hlsl">
 	  <FileType>Document</FileType>
 	</CopyFileToFolders>
-	<CopyFileToFolders Include="FSR4\FSR4_ZeroMV_Jitter.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-	<CopyFileToFolders Include="FSR4\FSR4_ZeroMV.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-	<CopyFileToFolders Include="FSR4\FSR4_OpticalFlow.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-	<CopyFileToFolders Include="FSR3\FSR3_ZeroMV_Jitter.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-	<CopyFileToFolders Include="FSR3\FSR3_ZeroMV.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-	<CopyFileToFolders Include="FSR3\FSR3_OpticalFlow.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-	<CopyFileToFolders Include="XeSS\XeSS_OpticalFlow.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-	<CopyFileToFolders Include="XeSS\XeSS_ZeroMV_Jitter.hlsl">
-	  <FileType>Document</FileType>
-	</CopyFileToFolders>
-    <CopyFileToFolders Include="XeSS\XeSS_ZeroMV.hlsl">
-      <FileType>Document</FileType>
-    </CopyFileToFolders>
     <CopyFileToFolders Include="ACNet.hlsl">
       <FileType>Document</FileType>
     </CopyFileToFolders>
@@ -135,18 +102,6 @@
     </CopyFileToFolders>
     <CopyFileToFolders Include="FSR\FSR_RCAS.hlsl">
       <FileType>Document</FileType>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="FSR2\FSR2_ZeroMV.hlsl">
-      <FileType>Document</FileType>
-      <DeploymentContent>true</DeploymentContent>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="FSR2\FSR2_ZeroMV_Jitter.hlsl">
-      <FileType>Document</FileType>
-      <DeploymentContent>true</DeploymentContent>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="FSR2\FSR2_OpticalFlow.hlsl">
-      <FileType>Document</FileType>
-      <DeploymentContent>true</DeploymentContent>
     </CopyFileToFolders>
     <CopyFileToFolders Include="RTXVideo\RTXVideo_Denoise_Low.hlsl">
       <FileType>Document</FileType>
@@ -582,17 +537,24 @@
     <CopyFileToFolders Include="DLSS\DLSS_SR.hlsl">
       <FileType>Document</FileType>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="DLSS\DLSS_ZeroMV_Jitter.hlsl">
-      <FileType>Document</FileType>
-      <DeploymentContent>true</DeploymentContent>
-    </CopyFileToFolders>
-    <CopyFileToFolders Include="DLSS\DLSS_OpticalFlow.hlsl">
-      <FileType>Document</FileType>
-      <DeploymentContent>true</DeploymentContent>
-    </CopyFileToFolders>
     <CopyFileToFolders Include="k7_modernAnime_FHD_x2.hlsl">
       <FileType>Document</FileType>
     </CopyFileToFolders>
   </ItemGroup>
+  <ItemGroup>
+    <CopyFileToFolders Include="FSR2\FSR2_SR.hlsl"><FileType>Document</FileType></CopyFileToFolders>
+  </ItemGroup>
+  <ItemGroup>
+    <CopyFileToFolders Include="FSR3\FSR3_SR.hlsl"><FileType>Document</FileType></CopyFileToFolders>
+  </ItemGroup>
+  <ItemGroup>
+    <CopyFileToFolders Include="FSR4\FSR4_SR.hlsl"><FileType>Document</FileType></CopyFileToFolders>
+  </ItemGroup>
+  <ItemGroup>
+    <CopyFileToFolders Include="XeSS\XeSS_SR.hlsl"><FileType>Document</FileType></CopyFileToFolders>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="RemoveRetiredSrEffects" BeforeTargets="Build">
+    <Delete Files="$(OutDir)effects\DLSS\DLSS_ZeroMV.hlsl;$(OutDir)effects\DLSS\DLSS_ZeroMV_Jitter.hlsl;$(OutDir)effects\DLSS\DLSS_OpticalFlow.hlsl;$(OutDir)effects\FSR2\FSR2_ZeroMV.hlsl;$(OutDir)effects\FSR2\FSR2_ZeroMV_Jitter.hlsl;$(OutDir)effects\FSR2\FSR2_OpticalFlow.hlsl;$(OutDir)effects\FSR3\FSR3_ZeroMV.hlsl;$(OutDir)effects\FSR3\FSR3_ZeroMV_Jitter.hlsl;$(OutDir)effects\FSR3\FSR3_OpticalFlow.hlsl;$(OutDir)effects\FSR4\FSR4_ZeroMV.hlsl;$(OutDir)effects\FSR4\FSR4_ZeroMV_Jitter.hlsl;$(OutDir)effects\FSR4\FSR4_OpticalFlow.hlsl;$(OutDir)effects\XeSS\XeSS_ZeroMV.hlsl;$(OutDir)effects\XeSS\XeSS_ZeroMV_Jitter.hlsl;$(OutDir)effects\XeSS\XeSS_OpticalFlow.hlsl" />
+  </Target>
 </Project>

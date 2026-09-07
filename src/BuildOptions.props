@@ -12,6 +12,8 @@
     <DebugBorder>false</DebugBorder>
     <!-- 在性能分析器上显示调试信息 -->
     <DebugInfoOnOverlay>false</DebugInfoOnOverlay>
+    <!-- Bounded CPU frame tracing for local diagnostic builds; keeps Release optimization. -->
+    <EnableFrameTrace>false</EnableFrameTrace>
     <!-- 使用 composition swapchain 呈现 -->
     <UseCompSwapchain>false</UseCompSwapchain>
     <!-- Deprecated compatibility input; use EnableDLSSSR in new overrides. -->
@@ -25,19 +27,14 @@
     <!-- Renderer-owned NVIDIA Optical Flow frame-guidance provider. -->
     <EnableNvidiaOpticalFlow>false</EnableNvidiaOpticalFlow>
     <NvidiaOpticalFlowSdkDir></NvidiaOpticalFlowSdkDir>
-    <!-- Depth Anything V2 Small through TensorRT/DirectML ONNX Runtime. -->
-    <EnableDepthAnythingV2>false</EnableDepthAnythingV2>
-    <DepthAnythingModelDir></DepthAnythingModelDir>
-    <OnnxRuntimeTensorRTDir></OnnxRuntimeTensorRTDir>
-    <OnnxRuntimeDirectMLDir></OnnxRuntimeDirectMLDir>
-    <DirectMLRuntimeDir></DirectMLRuntimeDir>
-    <TensorRTRuntimeDir></TensorRTRuntimeDir>
     <EnableFSR2ZeroMV>false</EnableFSR2ZeroMV>
     <FSR2SdkDir></FSR2SdkDir>
     <FSR2RuntimeDir></FSR2RuntimeDir>
     <!-- FSR 3.1 upscaler-only through D3D11/D3D12 shared resources. -->
     <EnableFSR3ZeroMV>false</EnableFSR3ZeroMV>
     <FSR3SdkDir></FSR3SdkDir>
+    <!-- Cross-vendor FidelityFX Optical Flow frame-guidance provider. -->
+    <EnableAmdOpticalFlow></EnableAmdOpticalFlow>
     <!-- Cross-vendor XeSS-SR through D3D11/D3D12 shared resources. -->
     <EnableXeSSZeroMV>false</EnableXeSSZeroMV>
 	<!-- Cross-vendor XeSS Frame Generation x2 through a D3D12 proxy swap chain. -->
@@ -61,5 +58,6 @@
   <PropertyGroup>
     <!-- Preserve existing local/CI overrides while using the accurate name internally. -->
     <EnableDLSSSR Condition="'$(EnableDLSSSR)' == ''">$(EnableDLSSZeroMV)</EnableDLSSSR>
+    <EnableAmdOpticalFlow Condition="'$(EnableAmdOpticalFlow)' == ''">$(EnableFSR3ZeroMV)</EnableAmdOpticalFlow>
   </PropertyGroup>
 </Project>

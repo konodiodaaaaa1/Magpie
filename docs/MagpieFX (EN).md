@@ -19,8 +19,11 @@ MagpieFX is based on DirectX 11 compute shader
 
 // Definition of parameters
 //!PARAMETER
-// "LABEL" refers to the name of the parameter that is displayed on the user interface.
+// "LABEL" is the parameter name shown in the UI; a literal \n renders as a line break.
 //!LABEL Sharpness
+// Optional: parameters with the same non-empty GROUP label share one UI column.
+// Columns follow the order in which groups first appear. GROUP changes UI layout only.
+//!GROUP Detail
 // "DEFAULT", "MIN", "MAX", and "STEP" are all required.
 //!DEFAULT 0.1
 //!MIN 0.01
@@ -142,6 +145,17 @@ void Pass2(uint2 blockStart, uint3 threadId) {
     OUTPUT[blockStart] = MF4(1,1,1,1);
 }
 ```
+
+### Parameter groups
+
+`GROUP` must contain a non-empty label and may appear at most once in each `PARAMETER`
+block. Repeating the same label reuses that column while preserving declaration order
+inside it. Parameters without `GROUP` belong to the untitled default group. Effects
+without any `GROUP` directives keep the original single 260-pixel untitled column.
+The default group and named groups may be mixed; their first parameter determines
+column order. Group metadata does not change parameter names, values, constant layout,
+or shader compilation. A literal `\n` in `LABEL` is decoded as a display line break and
+does not begin another effect directive.
 
 ### Predefined functions
 
